@@ -48,7 +48,7 @@
 %%    integer               number
 %%    long                  number
 %%    dictionary            dict
-%%    float                 *not supported*
+%%    float                 float
 %%    unicode               *not supported*
 %%    object                *not supported*
 %% '''
@@ -153,6 +153,11 @@ step_machine(Mach, <<16#8a, Len, Num:Len/little-signed-unit:8, Rest/binary>>) ->
 % long integer, 4-byte length
 step_machine(Mach, <<16#8b, Len:32/little-signed,
                    Num:Len/little-signed-unit:8, Rest/binary>>) ->
+    NewStack = [Num | Mach#mach.stack],
+    {Mach#mach{stack=NewStack}, Rest};
+
+% float
+step_machine(Mach, <<$G, Num/big-signed-float, Rest/binary>>) ->
     NewStack = [Num | Mach#mach.stack],
     {Mach#mach{stack=NewStack}, Rest};
 
@@ -538,7 +543,13 @@ pickle_to_term_test_() ->
                                              75, 5, 78, 75, 6, 78, 75, 7, 78, 75, 8,
                                              78, 75, 9, 78, 117, 46>>),
                              dict_from_keys(lists:seq(0, 9)))),
-     ?_assert(pickle_to_term(<<16#80, 2, 139, 1, 1, 0:258/unit:8, 1, $.>>) == 1 bsl 2048)
+     ?_assert(pickle_to_term(<<16#80, 2, 139, 1, 1, 0:258/unit:8, 1, $.>>) == 1 bsl 2048),
+     ?_assert(pickle_to_term(<<128, 2, 71, 0, 0, 0, 0, 0, 0, 0, 0, 46>>) == 0.0),
+     ?_assert(pickle_to_term(<<128, 2, 71, 63, 240, 0, 0, 0, 0, 0, 0, 46>>) == 1.0),
+     ?_assert(pickle_to_term(<<128, 2, 71, 191, 240, 0, 0, 0, 0, 0, 0, 46>>) == -1.0),
+     ?_assert(pickle_to_term(<<128, 2, 71, 63, 248, 0, 0, 0, 0, 0, 0, 46>>) == 1.5),
+     ?_assert(pickle_to_term(<<128, 2, 71, 68, 21, 175, 29, 120, 181, 140, 64, 46>>) == 1.0e20),
+     ?_assert(pickle_to_term(<<128, 2, 71, 196, 21, 175, 29, 120, 181, 140, 64, 46>>) == -1.0e20)
      ].
 
 term_to_pickle_test_() ->
