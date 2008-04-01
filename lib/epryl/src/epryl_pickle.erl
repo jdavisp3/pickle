@@ -79,7 +79,7 @@ pickle_to_term(Pickle) when is_binary(Pickle) ->
 %%    number =< MAXINT      integer
 %%    number > MAXINT       long
 %%    dict                  dictionary
-%%    float                 *not supported*
+%%    float                 float
 %%    bitstring             *not supported*
 %%    arbitrary atom        *not supported*
 %% '''
@@ -347,6 +347,10 @@ encode_term(true, Pickle) ->
 encode_term(false, Pickle) ->
     [16#89 | Pickle];
 
+% floats
+encode_term(Number, Pickle) when is_float(Number) ->
+    [<<$G, Number/big-signed-float>> | Pickle];
+
 % tiny integers
 encode_term(Number, Pickle) when is_number(Number), Number >= 0, Number =< 255 ->
     [<<$K, Number>> | Pickle];
@@ -578,8 +582,14 @@ term_to_pickle_test_() ->
                                              $K, 1, $K, 2, $K, 3, $e, $.>>),
      ?_assert(term_to_pickle(dict:new()) == <<16#80, 2, $}, $.>>),
      ?_assert(term_to_pickle(dict:from_list([{1,2}])) == <<16#80, 2, $}, $(, $K, 1,
-                                                           $K, 2, $u, $.>>)
-    ].
+                                                           $K, 2, $u, $.>>),
+     ?_assert(term_to_pickle(0.0) == <<128, 2, 71, 0, 0, 0, 0, 0, 0, 0, 0, 46>>),
+     ?_assert(term_to_pickle(1.0) == <<128, 2, 71, 63, 240, 0, 0, 0, 0, 0, 0, 46>>),
+     ?_assert(term_to_pickle(-1.0) == <<128, 2, 71, 191, 240, 0, 0, 0, 0, 0, 0, 46>>),
+     ?_assert(term_to_pickle(1.5) == <<128, 2, 71, 63, 248, 0, 0, 0, 0, 0, 0, 46>>),
+     ?_assert(term_to_pickle(1.0e20) == <<128, 2, 71, 68, 21, 175, 29, 120, 181, 140, 64, 46>>),
+     ?_assert(term_to_pickle(-1.0e20) == <<128, 2, 71, 196, 21, 175, 29, 120, 181, 140, 64, 46>>)
+].
 
 
 dicts_are_same(D1, D2) ->
