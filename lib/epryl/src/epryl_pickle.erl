@@ -49,6 +49,7 @@
 %%    long                  number
 %%    dictionary            dict
 %%    float                 *not supported*
+%%    unicode               *not supported*
 %%    object                *not supported*
 %% '''
 %% Recursive and mutually recursive references are not
