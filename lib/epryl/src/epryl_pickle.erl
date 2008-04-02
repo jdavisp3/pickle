@@ -6,6 +6,10 @@
 %%%
 %%% Python pickles are binary representations of Python objects.
 %%% See [http://python.org/dev/peps/pep-0307/] for details.
+%%%
+%%% @todo handle Python unicode strings
+%%% @todo handle limited Python Exceptions
+%%%
 %%% @end
 %%% Created : 17 Feb 2008 by Dave Peticolas <dave@krondo.com>
 %%%-------------------------------------------------------------------
