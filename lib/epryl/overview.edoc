@@ -1,0 +1,10 @@
+@title The Epryl Library
+@doc 
+
+<p>
+Epryl is an Erlang library facilitating communication between Erlang
+and Python.
+</p>
+
+@author Dave Peticolas <dave@krondo.com>
+@copyright 2008, Dave Peticolas

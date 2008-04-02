@@ -2,7 +2,7 @@
 %%% @author Dave Peticolas <dave@krondo.com>
 %%% @copyright (C) 2008, Dave Peticolas
 %%% @doc
-%%% A library for converting Erlang terms to and from Python pickles.
+%%% A module for converting Erlang terms to and from Python pickles.
 %%%
 %%% Python pickles are binary representations of Python objects.
 %%% See [http://python.org/dev/peps/pep-0307/] for details.
