@@ -222,7 +222,7 @@ encode_box_int([{Key, Type, Options} | Protocol], Box) ->
             [EncKeyLength, Key, EncLength, EncValue
              | encode_box_int(Protocol, Box)];
         false ->
-            true = lists:member(optional, Options),
+            true = proplists:get_bool(optional, Options),
             encode_box_int(Protocol, Box)
     end.
 
@@ -236,7 +236,7 @@ decode_box(Protocol, Box, Packet) when size(Packet) < 2 ->
 decode_box([], Box, <<0, 0, Rest/binary>>) ->
     {done, Box, Rest};
 decode_box([{_, _, Options} | Protocol], Box, <<0, 0, _/binary>> = Packet) ->
-    true = lists:member(optional, Options),
+    true = proplists:get_bool(optional, Options),
     decode_box(Protocol, Box, Packet);
 decode_box(Protocol, Box, Packet) ->
     case match_kvp(Packet) of
