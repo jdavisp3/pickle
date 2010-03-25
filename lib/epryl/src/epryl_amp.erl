@@ -335,7 +335,7 @@ decode_amplist(ValBin, Protocol) ->
 
 % @private
 % @spec (String::string()) -> string()
-% @doc Return the orginal string, if it has a decimal point,
+% @doc Return the original string, if it has a decimal point,
 % or the original string followed by .0 if not.
 ensure_decimal(String) ->
     case lists:member($., String) of
