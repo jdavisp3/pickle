@@ -18,7 +18,7 @@
 %% API
 -export([pickle_to_term/1, term_to_pickle/1]).
 
--include("eunit.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 -define(MAXINT, 2147483647). % threshold to switch to Python long ints
 

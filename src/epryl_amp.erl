@@ -27,8 +27,9 @@
          decode_header/1, decode_command_header/1,
          encode_box/2]).
 
+-include_lib("eunit/include/eunit.hrl").
+
 -include("epryl_amp.hrl").
--include("eunit.hrl").
 
 -record(decoder, {orig_protocol, protocol, remainder, box=[]}).
 
