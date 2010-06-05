@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @author Dave Peticolas <dave@krondo.com>
-%%% @copyright (C) 2008, Dave Peticolas
+%%% @copyright (C) 2008-2010 Dave Peticolas
 %%% @doc
 %%% A module for converting Erlang terms to and from Python pickles.
 %%%
@@ -8,7 +8,7 @@
 %%% See [http://python.org/dev/peps/pep-0307/] for details.
 %%%
 %%% @todo handle Python unicode strings
-%%% @todo handle limited Python Exceptions
+%%% @todo handle limited Python objects
 %%%
 %%% @end
 %%% Created : 17 Feb 2008 by Dave Peticolas <dave@krondo.com>
