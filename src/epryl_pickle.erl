@@ -356,15 +356,18 @@ encode_term(Number, Pickle) when is_float(Number) ->
     [<<$G, Number/big-signed-float>> | Pickle];
 
 % tiny integers
-encode_term(Number, Pickle) when is_number(Number), Number >= 0, Number =< 255 ->
+encode_term(Number, Pickle)
+  when is_number(Number), Number >= 0, Number =< 255 ->
     [<<$K, Number>> | Pickle];
 
 % medium integers
-encode_term(Number, Pickle) when is_number(Number), Number >= 256, Number =< 65535 ->
+encode_term(Number, Pickle)
+  when is_number(Number), Number >= 256, Number =< 65535 ->
     [<<$M, Number:16/little-unsigned>> | Pickle];
 
 % big integers
-encode_term(Number, Pickle) when is_number(Number), Number =< ?MAXINT ->
+encode_term(Number, Pickle)
+  when is_number(Number), Number =< ?MAXINT ->
     [<<$J, Number:32/little-signed>> | Pickle];
 
 % empty tuples
