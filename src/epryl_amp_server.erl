@@ -1,12 +1,11 @@
-%%%-------------------------------------------------------------------
 %%% @author Dave Peticolas <dave@krondo.com>
-%%% @copyright (C) 2008, Dave Peticolas
+%%% @copyright (C) 2008-2011, Dave Peticolas
 %%% @doc
 %%% AMP client. See:
-%%%   [http://twistedmatrix.com/documents/current/api/twisted.protocols.amp.html]
+%%%  [http://twistedmatrix.com/documents/current/api/twisted.protocols.amp.html]
 %%% @end
 %%% Created : 27 Apr 2008 by Dave Peticolas <dave@krondo.com>
-%%%-------------------------------------------------------------------
+
 -module(epryl_amp_server).
 
 -behaviour(gen_server).
@@ -41,11 +40,6 @@
                 max_pending % maximum # of pending q's & a's
                }).
 
-%%%===================================================================
-%%% API
-%%%===================================================================
-
-%%--------------------------------------------------------------------
 %% @doc
 %% Starts the server with a list of command handlers.
 %%
@@ -56,41 +50,32 @@
 %% @spec start_link(HandlerSpecs) -> {ok, Pid} | ignore | {error, Error}
 %%        HandlerSpecs = [HSpec]
 %%        HSpec = {Command::amp_command(), Handler::function()}
-%% @end
-%%--------------------------------------------------------------------
 start_link(HandlerSpecs) when is_list(HandlerSpecs) ->
     start_link(HandlerSpecs, []).
 
-%%--------------------------------------------------------------------
 %% @doc
 %% Starts the server with a list of command handlers and options.
 %%
 %% @spec start_link(HandlerSpecs, Options) -> {ok, Pid} | ignore | {error, Error}
 %%        Options = [Options]
 %%        Options = {max_pending, integer()}
-%% @end
-%%--------------------------------------------------------------------
 start_link(HandlerSpecs, Options)
   when is_list(HandlerSpecs), is_list(Options) ->
     gen_server:start_link(?MODULE, [HandlerSpecs, Options], []).
 
 
-%%--------------------------------------------------------------------
 %% @doc
 %% Connect to an AMP server. The SupNamePrefix is the prefix used to
 %% name the gen_socket top-level supervisor.
 %%
 %% @spec connect(SupNamePrefix::string(), Host::string(),
 %%               Port::integer()) -> {ok, Pid}
-%% @end
-%%--------------------------------------------------------------------
 connect(SupNamePrefix, Host, Port) ->
     {ok, Socket} = gen_tcp:connect(Host, Port,
                                    [{packet, raw}, binary, {active, false}],
                                    ?TIMEOUT),
     gen_socket_sup:handle_socket(SupNamePrefix, epryl_amp_server, Socket).
 
-%%--------------------------------------------------------------------
 %% @doc
 %% Send a question to the peer. The return value includes a QuestionKey.
 %% Once an answer, or a legal error, comes back from the peer, a message
@@ -107,8 +92,6 @@ connect(SupNamePrefix, Host, Port) ->
 %%         Proto = amp_command() | string()
 %%         Result = {ok, QuestionKey}
 %%         QuestionKey = {Pid, Id}
-%% @end
-%%--------------------------------------------------------------------
 ask(Pid, Command, KVPairs)
   when is_record(Command, amp_command), is_list(KVPairs) ->
     gen_server:call(Pid, {ask, Command, KVPairs});
@@ -118,7 +101,6 @@ ask(Pid, Name, KVPairs)
     {ok, Command} = gen_server:call(Pid, {lookup_command, Name}),
     ask(Pid, Command, KVPairs).
 
-%%--------------------------------------------------------------------
 %% @doc
 %% Send a question to the peer. The call blocks until the peer returns
 %% an answer or the standard gen_server timeout expires.
@@ -129,8 +111,6 @@ ask(Pid, Name, KVPairs)
 %% @spec call(Pid, Proto, KVPairs::list()) -> Result
 %%         Proto = amp_command() | string()
 %%         Result = {ok, KVPairs} | {error, Error, KVPairs}
-%% @end
-%%--------------------------------------------------------------------
 call(Pid, Command, KVPairs)
   when is_record(Command, amp_command), is_list(KVPairs) ->
     gen_server:call(Pid, {call, Command, KVPairs});
@@ -140,7 +120,6 @@ call(Pid, Name, KVPairs)
     {ok, Command} = gen_server:call(Pid, {lookup_command, Name}),
     call(Pid, Command, KVPairs).
 
-%%--------------------------------------------------------------------
 %% @doc
 %% Send a question to the peer. The call blocks until the peer returns
 %% an answer or the given timeout expires.
@@ -152,8 +131,6 @@ call(Pid, Name, KVPairs)
 %%         Proto = amp_command() | string()
 %%         Timeout = int() | infinity
 %%         Result = {ok, KVPairs} | {error, Error, KVPairs}
-%% @end
-%%--------------------------------------------------------------------
 call(Pid, Command, KVPairs, Timeout)
   when is_record(Command, amp_command), is_list(KVPairs) ->
     gen_server:call(Pid, {call, Command, KVPairs}, Timeout);
@@ -163,7 +140,6 @@ call(Pid, Name, KVPairs, Timeout)
     {ok, Command} = gen_server:call(Pid, {lookup_command, Name}),
     call(Pid, Command, KVPairs, Timeout).
 
-%%--------------------------------------------------------------------
 %% @doc
 %% Respond to a question from the peer, with either an answer or an error.
 %% This call must be used to respond to the peer when the Handler returns
@@ -171,35 +147,15 @@ call(Pid, Name, KVPairs, Timeout)
 %%
 %% @spec respond(Pid, Response::atom(), Id::term(), KVPairs::kvpairs()) -> ok
 %%         Response = answer | error
-%% @end
-%%--------------------------------------------------------------------
 respond(Pid, Response, Id, KVPairs) when is_atom(Response), is_list(KVPairs) ->
     gen_server:cast(Pid, {respond, Response, Id, KVPairs}).
 
-%%--------------------------------------------------------------------
 %% @doc
 %% The set_socket callback is used by the gen_socket supervisor.
-%% @end
-%%--------------------------------------------------------------------
 set_socket(Pid, Socket) ->
     ok = gen_server:call(Pid, {set_socket, Socket}).
 
 
-%%%===================================================================
-%%% gen_server callbacks
-%%%===================================================================
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Initiates the server
-%%
-%% @spec init(Args) -> {ok, State} |
-%%                     {ok, State, Timeout} |
-%%                     ignore |
-%%                     {stop, Reason}
-%% @end
-%%--------------------------------------------------------------------
 init([HandlerSpecs, Options]) ->
     case lists:keysearch(max_pending, 1, Options) of
         {value, {max_pending, MaxPending}} when is_integer(MaxPending) ->
@@ -211,20 +167,6 @@ init([HandlerSpecs, Options]) ->
                        answers=dict:new(), max_pending=MaxPending},
     {ok, add_handlers(HandlerSpecs, InitState)}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling call messages
-%%
-%% @spec handle_call(Request, From, State) ->
-%%                                   {reply, Reply, State} |
-%%                                   {reply, Reply, State, Timeout} |
-%%                                   {noreply, State} |
-%%                                   {noreply, State, Timeout} |
-%%                                   {stop, Reason, Reply, State} |
-%%                                   {stop, Reason, State}
-%% @end
-%%--------------------------------------------------------------------
 
 % Receive our socket from the socket supervisor.
 handle_call({set_socket, Socket}, _From, State) ->
@@ -274,16 +216,6 @@ handle_call({get_command_by_name, CommandName}, _From, State) ->
 handle_call(Request, _From, State) ->
     {stop, {unknown_call, Request}, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling cast messages
-%%
-%% @spec handle_cast(Msg, State) -> {noreply, State} |
-%%                                  {noreply, State, Timeout} |
-%%                                  {stop, Reason, State}
-%% @end
-%%--------------------------------------------------------------------
 
 % We got a box from the inbox process.
 handle_cast({box, BoxTag, KVPairs}, State) ->
@@ -298,51 +230,21 @@ handle_cast({respond, Response, ExternalId, KVPairs}, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling all non call/cast messages
-%%
-%% @spec handle_info(Info, State) -> {noreply, State} |
-%%                                   {noreply, State, Timeout} |
-%%                                   {stop, Reason, State}
-%% @end
-%%--------------------------------------------------------------------
+
 handle_info(Info, State) ->
     error_logger:error_msg("Unexpected message: ~p\n", [Info]),
     {stop, bad_message, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% This function is called by a gen_server when it is about to
-%% terminate. It should be the opposite of Module:init/1 and do any
-%% necessary cleaning up. When it returns, the gen_server terminates
-%% with Reason. The return value is ignored.
-%%
-%% @spec terminate(Reason, State) -> void()
-%% @end
-%%--------------------------------------------------------------------
+
 terminate(_Reason, State) ->
     stop_child(State#state.inbox),
     stop_child(State#state.outbox).
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Convert process state when code is changed
-%%
-%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
-%% @end
-%%--------------------------------------------------------------------
 code_change(_OldVsn, State, _Extra) ->
     send_code_change(State#state.inbox),
     send_code_change(State#state.outbox),
     {ok, State}.
 
-%%%===================================================================
-%%% Internal functions
-%%%===================================================================
 
 % @private
 % @spec (state(), Question, KVPairs) -> {Id, NewState}
@@ -711,9 +613,7 @@ check_max_pending(Dict, #state{max_pending=Max} = _State) ->
     end.
 
 
-%%%===================================================================
-%%% Tests
-%%%===================================================================
+% Tests
 
 basic_test_() ->
     {setup,
