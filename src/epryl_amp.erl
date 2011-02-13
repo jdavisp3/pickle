@@ -38,7 +38,6 @@
 %% an error response.
 %%
 %% @spec make_error(Key::atom(), Description::string()) -> box()
-%% @end
 make_error(Key, Description) when is_atom(Key), is_list(Description) ->
     [{?AMP_KEY_ERROR_CODE, Key},
      {?AMP_KEY_ERROR_DESCRIPTION, Description}].
@@ -48,7 +47,6 @@ make_error(Key, Description) when is_atom(Key), is_list(Description) ->
 %% binary encoding of the Amp Box that would implement the call.
 %%
 %% @spec encode_ask(Command::amp_record(), Id::string(), Box::box()) -> binary()
-%% @end
 encode_ask(Command, Id, Box)
   when is_record(Command, amp_command), is_list(Id), is_list(Box)->
     [_ | _] = Box, % no empty boxes
@@ -66,7 +64,6 @@ encode_ask(Command, Id, Box)
 %%
 %% @spec encode_answer(Command::amp_record(), Id::string(),
 %%                     Box::box()) -> binary()
-%% @end
 encode_answer(Command, Id, Box)
   when is_record(Command, amp_command), is_list(Id), is_list(Box)->
     [_ | _] = Box, % no empty boxes
@@ -79,7 +76,6 @@ encode_answer(Command, Id, Box)
 %%
 %% @spec encode_error(Command::amp_record(), Id::string(),
 %%                    Box::box()) -> binary()
-%% @end
 encode_error(Command, Id, Box)
   when is_record(Command, amp_command), is_list(Id), is_list(Box) ->
     {value, {_, ErrorKey}} = lists:keysearch(?AMP_KEY_ERROR_CODE, 1, Box),
@@ -95,7 +91,6 @@ encode_error(Command, Id, Box)
 %%
 %% @spec encode_response(Response::atom(), Command::amp_record(),
 %%                       Id::string(), Box::box()) -> binary()
-%% @end
 encode_response(answer, Command, Id, Box) ->
     encode_answer(Command, Id, Box);
 encode_response(error, Command, Id, Box) ->
@@ -105,7 +100,6 @@ encode_response(error, Command, Id, Box) ->
 %% format of an Amp box. Decoders are required arguments for decode_box/2.
 %%
 %% @spec new_decoder(Protocol::list()) -> decoder()
-%% @end
 new_decoder(Protocol) when is_list(Protocol) ->
     [_ | _] = Protocol, % no empty boxes
     EmptyBin = <<>>,
@@ -120,7 +114,6 @@ new_decoder(Protocol) when is_list(Protocol) ->
 %%
 %%        Result = {not_done, decoder()} |
 %%                 {done, Box::box(), Rest::binary()}
-%% @end
 decode_box(Decoder, Packet) when is_record(Decoder, decoder),
                                  is_binary(Packet) ->
     Whole = erlang:concat_binary([Decoder#decoder.remainder, Packet]),
@@ -144,7 +137,6 @@ decode_box(Decoder, Packet) when is_record(Decoder, decoder),
 %%
 %%        Result = not_enough | {BoxType, Id::string(), Remaining::binary()}
 %%        BoxType = ask | answer | error
-%% @end
 decode_header(Packet) when is_binary(Packet) ->
     case match_kvp(Packet) of
         not_enough ->
@@ -162,7 +154,6 @@ decode_header(Packet) when is_binary(Packet) ->
 %% @spec (Packet::binary()) -> Result
 %%
 %%        Result = not_enough | {CommandName::string(), Remaining::binary()}
-%% @end
 decode_command_header(Packet) when is_binary(Packet) ->
     case match_kvp(Packet) of
         not_enough ->
@@ -176,7 +167,6 @@ decode_command_header(Packet) when is_binary(Packet) ->
 %% of the box that matches the protocol.
 %%
 %% @spec encode_box(Protocol::AmpList, Box::box()) -> binary()
-%% @end
 encode_box(Protocol, Box) when is_list(Protocol), is_list(Box) ->
     IOList = encode_box_int(Protocol, Box),
     [_, _ | _] = IOList, % no empty boxes
