@@ -1,6 +1,5 @@
-%%%-------------------------------------------------------------------
 %%% @author Dave Peticolas <dave@krondo.com>
-%%% @copyright (C) 2008, Dave Peticolas
+%%% @copyright (C) 2008-2011, Dave Peticolas
 %%% @doc
 %%% AMP protocol utilities. See:
 %%%   [http://twistedmatrix.com/documents/current/api/twisted.protocols.amp.html]
@@ -16,7 +15,7 @@
 %%%
 %%% @end
 %%% Created :  7 Apr 2008 by Dave Peticolas <dave@krondo.com>
-%%%-------------------------------------------------------------------
+
 -module(epryl_amp).
 
 %% API
@@ -34,26 +33,22 @@
 -record(decoder, {orig_protocol, protocol, remainder, box=[]}).
 
 
-%%--------------------------------------------------------------------
 %% @doc Given an error atom key and a string description, return a box
 %% that can be returned by an ask handler as the error information for
 %% an error response.
 %%
 %% @spec make_error(Key::atom(), Description::string()) -> box()
 %% @end
-%%--------------------------------------------------------------------
 make_error(Key, Description) when is_atom(Key), is_list(Description) ->
     [{?AMP_KEY_ERROR_CODE, Key},
      {?AMP_KEY_ERROR_DESCRIPTION, Description}].
 
 
-%%--------------------------------------------------------------------
 %% @doc Given an amp_command record, a message id, and a box, return a
 %% binary encoding of the Amp Box that would implement the call.
 %%
 %% @spec encode_ask(Command::amp_record(), Id::string(), Box::box()) -> binary()
 %% @end
-%%--------------------------------------------------------------------
 encode_ask(Command, Id, Box)
   when is_record(Command, amp_command), is_list(Id), is_list(Box)->
     [_ | _] = Box, % no empty boxes
@@ -65,7 +60,6 @@ encode_ask(Command, Id, Box)
                 | Box]).
 
 
-%%--------------------------------------------------------------------
 %% @doc Given an amp_command record, a message id, and a box, return a
 %% binary encoding of the AmpBox that would implement the answer box for
 %% a call.
@@ -73,14 +67,12 @@ encode_ask(Command, Id, Box)
 %% @spec encode_answer(Command::amp_record(), Id::string(),
 %%                     Box::box()) -> binary()
 %% @end
-%%--------------------------------------------------------------------
 encode_answer(Command, Id, Box)
   when is_record(Command, amp_command), is_list(Id), is_list(Box)->
     [_ | _] = Box, % no empty boxes
     encode_box([{?AMP_KEY_ANSWER, string, []} | Command#amp_command.response],
                [{?AMP_KEY_ANSWER, Id} | Box]).
 
-%%--------------------------------------------------------------------
 %% @doc Given an amp_command record, a message id, and a box, return a
 %% binary encoding of the Amp Box that would implement the error box for
 %% a call.
@@ -88,7 +80,6 @@ encode_answer(Command, Id, Box)
 %% @spec encode_error(Command::amp_record(), Id::string(),
 %%                    Box::box()) -> binary()
 %% @end
-%%--------------------------------------------------------------------
 encode_error(Command, Id, Box)
   when is_record(Command, amp_command), is_list(Id), is_list(Box) ->
     {value, {_, ErrorKey}} = lists:keysearch(?AMP_KEY_ERROR_CODE, 1, Box),
@@ -98,7 +89,6 @@ encode_error(Command, Id, Box)
     encode_box([{?AMP_KEY_ERROR, string, []} | ?AMP_ERROR_PROTOCOL],
                [{?AMP_KEY_ERROR, Id} | Box2]).
 
-%%--------------------------------------------------------------------
 %% @doc Given an amp_command record, a message id, and a box, return a
 %% binary encoding of the AmpBox that would implement the error box for
 %% a call.
@@ -106,25 +96,21 @@ encode_error(Command, Id, Box)
 %% @spec encode_response(Response::atom(), Command::amp_record(),
 %%                       Id::string(), Box::box()) -> binary()
 %% @end
-%%--------------------------------------------------------------------
 encode_response(answer, Command, Id, Box) ->
     encode_answer(Command, Id, Box);
 encode_response(error, Command, Id, Box) ->
     encode_error(Command, Id, Box).
 
-%%--------------------------------------------------------------------
 %% @doc Return a new decoder object suitable for unserializing a wire
 %% format of an Amp box. Decoders are required arguments for decode_box/2.
 %%
 %% @spec new_decoder(Protocol::list()) -> decoder()
 %% @end
-%%--------------------------------------------------------------------
 new_decoder(Protocol) when is_list(Protocol) ->
     [_ | _] = Protocol, % no empty boxes
     EmptyBin = <<>>,
     #decoder{orig_protocol=Protocol, protocol=Protocol, remainder=EmptyBin}.
 
-%%--------------------------------------------------------------------
 %% @doc Decode a part (or whole) of a box.
 %% If the complete box is decoded, return the box we decoded and the
 %% unprocessed bytes. If we are not done, return the new state of the
@@ -135,7 +121,6 @@ new_decoder(Protocol) when is_list(Protocol) ->
 %%        Result = {not_done, decoder()} |
 %%                 {done, Box::box(), Rest::binary()}
 %% @end
-%%--------------------------------------------------------------------
 decode_box(Decoder, Packet) when is_record(Decoder, decoder),
                                  is_binary(Packet) ->
     Whole = erlang:concat_binary([Decoder#decoder.remainder, Packet]),
@@ -150,7 +135,6 @@ decode_box(Decoder, Packet) when is_record(Decoder, decoder),
             {done, lists:reverse(Box), Rest}
     end.
 
-%%--------------------------------------------------------------------
 %% @doc Match a key/value pair encoded at the front of an incoming box.
 %% Return a tuple indicating the type of incoming box and the Id for the
 %% message, plus the remaining bytes in the packet. The function will crash
@@ -161,7 +145,6 @@ decode_box(Decoder, Packet) when is_record(Decoder, decoder),
 %%        Result = not_enough | {BoxType, Id::string(), Remaining::binary()}
 %%        BoxType = ask | answer | error
 %% @end
-%%--------------------------------------------------------------------
 decode_header(Packet) when is_binary(Packet) ->
     case match_kvp(Packet) of
         not_enough ->
@@ -172,7 +155,6 @@ decode_header(Packet) when is_binary(Packet) ->
             {BoxType, Id, Remaining}
     end.
 
-%%--------------------------------------------------------------------
 %% @doc Match a key/value pair encoding the command name of an ask box.
 %% Return a tuple with the command name and the remaining bytes in the
 %% packet. The function will crash if the kvp was the wrong name.
@@ -181,7 +163,6 @@ decode_header(Packet) when is_binary(Packet) ->
 %%
 %%        Result = not_enough | {CommandName::string(), Remaining::binary()}
 %% @end
-%%--------------------------------------------------------------------
 decode_command_header(Packet) when is_binary(Packet) ->
     case match_kvp(Packet) of
         not_enough ->
@@ -191,22 +172,16 @@ decode_command_header(Packet) when is_binary(Packet) ->
             {CommandName, Remaining}
     end.
 
-%%--------------------------------------------------------------------
 %% @doc Given an AmpList protocol and a box, return a binary encoding
 %% of the box that matches the protocol.
 %%
 %% @spec encode_box(Protocol::AmpList, Box::box()) -> binary()
 %% @end
-%%--------------------------------------------------------------------
 encode_box(Protocol, Box) when is_list(Protocol), is_list(Box) ->
     IOList = encode_box_int(Protocol, Box),
     [_, _ | _] = IOList, % no empty boxes
     list_to_binary(IOList).
 
-
-%%%===================================================================
-%%% Internal functions
-%%%===================================================================
 
 % @private
 % @spec (Protocol::list(), Box::box()) -> iolist()
