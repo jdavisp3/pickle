@@ -1,6 +1,5 @@
-%%%-------------------------------------------------------------------
 %%% @author Dave Peticolas <dave@krondo.com>
-%%% @copyright (C) 2008-2010 Dave Peticolas
+%%% @copyright (C) 2008-2011 Dave Peticolas
 %%% @doc
 %%% A module for converting Erlang terms to and from Python pickles.
 %%%
@@ -12,7 +11,7 @@
 %%%
 %%% @end
 %%% Created : 17 Feb 2008 by Dave Peticolas <dave@krondo.com>
-%%%-------------------------------------------------------------------
+
 -module(epryl_pickle).
 
 %% API
@@ -26,11 +25,6 @@
 -record(mach, {stack=[], memo, done=false}).
 
 
-%%%===================================================================
-%%% API
-%%%===================================================================
-
-%%--------------------------------------------------------------------
 %% @doc Turn a Python pickle into an Erlang term.
 %%
 %% The input binary must contain a complete Python
@@ -60,13 +54,10 @@
 %% supported, i.e., lists cannot refer to themselves, etc.
 %%
 %% @spec pickle_to_term(Pickle::binary()) -> term()
-%% @end
-%%--------------------------------------------------------------------
 pickle_to_term(Pickle) when is_binary(Pickle) ->
     {Val, <<>>} = start_machine(Pickle),
     Val.
 
-%%--------------------------------------------------------------------
 %% @doc Turn an Erlang term into a Python pickle.
 %%
 %% The conversion will result in a pickle using version 2 codes and will
@@ -88,8 +79,6 @@ pickle_to_term(Pickle) when is_binary(Pickle) ->
 %%    arbitrary atom        *not supported*
 %% '''
 %% @spec term_to_pickle(Term::term()) -> Pickle::binary()
-%% @end
-%%--------------------------------------------------------------------
 term_to_pickle(Term) ->
     start_encode(Term).
 
@@ -483,9 +472,7 @@ encode_dict_kv(Key, Value, Pickle) ->
     encode_term(Value, encode_term(Key, Pickle)).
 
 
-%%%===================================================================
-%%% Tests
-%%%===================================================================
+% Tests
 
 pickle_to_term_test_() ->
     [
