@@ -2,7 +2,7 @@
 %%% @copyright (C) 2008-2011, Dave Peticolas
 %%% @doc
 %%% AMP protocol utilities. See:
-%%%   [http://twistedmatrix.com/documents/current/api/twisted.protocols.amp.html]
+%%%  [http://twistedmatrix.com/documents/current/api/twisted.protocols.amp.html]
 %%%
 %%% This module implements low-level encoding and decoding of AMP
 %%% Boxes. An Amp Box is represented in Erlang as a list of key/value
