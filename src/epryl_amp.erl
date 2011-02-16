@@ -116,7 +116,7 @@ new_decoder(Protocol) when is_list(Protocol) ->
 %%                 {done, Box::box(), Rest::binary()}
 decode_box(Decoder, Packet) when is_record(Decoder, decoder),
                                  is_binary(Packet) ->
-    Whole = erlang:concat_binary([Decoder#decoder.remainder, Packet]),
+    Whole = erlang:list_to_binary([Decoder#decoder.remainder, Packet]),
     Result = decode_box(Decoder#decoder.protocol,
                         Decoder#decoder.box, Whole),
     case Result of

@@ -320,7 +320,7 @@ get_header(Socket, Server, Accum) ->
     case epryl_amp:decode_header(Accum) of
         not_enough ->
             Packet = get_packet(Socket),
-            Whole = erlang:concat_binary([Accum, Packet]),
+            Whole = erlang:list_to_binary([Accum, Packet]),
             get_header(Socket, Server, Whole);
         {BoxType, Id, Remaining} ->
             start_decoding(BoxType, Id, Socket, Server, Remaining)
@@ -349,7 +349,7 @@ get_command_header(Id, Socket, Server, Accum) ->
     case epryl_amp:decode_command_header(Accum) of
         not_enough ->
             Packet = get_packet(Socket),
-            Whole = erlang:concat_binary([Accum, Packet]),
+            Whole = erlang:list_to_binary([Accum, Packet]),
             get_command_header(Id, Socket, Server, Whole);
         {CommandName, Remaining} ->
             Command = gen_server:call(Server,
@@ -370,7 +370,7 @@ decode_box(Decoder, BoxTag, Socket, Server, Accum) ->
     case epryl_amp:decode_box(Decoder, Accum) of
         {not_done, NewDecoder} ->
             Packet = get_packet(Socket),
-            Whole = erlang:concat_binary([Accum, Packet]),
+            Whole = erlang:list_to_binary([Accum, Packet]),
             decode_box(NewDecoder, BoxTag, Socket, Server, Whole);
         {done, KVPairs, Remaining} ->
             gen_server:cast(Server, {box, BoxTag, KVPairs}),
