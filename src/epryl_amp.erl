@@ -12,9 +12,6 @@
 %%%    KVP = {Key, Value}
 %%%    Key = string()
 %%%    Value = term()
-%%%
-%%% @end
-%%% Created :  7 Apr 2008 by Dave Peticolas <dave@krondo.com>
 
 -module(epryl_amp).
 

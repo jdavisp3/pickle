@@ -3,8 +3,6 @@
 %%% @doc
 %%% AMP client. See:
 %%%  [http://twistedmatrix.com/documents/current/api/twisted.protocols.amp.html]
-%%% @end
-%%% Created : 27 Apr 2008 by Dave Peticolas <dave@krondo.com>
 
 -module(epryl_amp_server).
 

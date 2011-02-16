@@ -8,9 +8,6 @@
 %%%
 %%% @todo handle Python unicode strings
 %%% @todo handle limited Python objects
-%%%
-%%% @end
-%%% Created : 17 Feb 2008 by Dave Peticolas <dave@krondo.com>
 
 -module(epryl_pickle).
 
