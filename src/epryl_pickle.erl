@@ -15,6 +15,7 @@
 -export([pickle_to_term/1, term_to_pickle/1]).
 
 -include_lib("eunit/include/eunit.hrl").
+-include("epryl_pickle.hrl").
 
 -define(MAXINT, 2147483647). % threshold to switch to Python long ints
 
@@ -44,8 +45,9 @@
 %%    long                  number
 %%    dictionary            dict
 %%    float                 float
-%%    unicode               *not supported*
-%%    object                *not supported*
+%%    unicode               binary
+%%    object                #'$object'{} (record)
+%%    class / function      #'$global'{} (record)
 %% '''
 %% Recursive and mutually recursive references are not
 %% supported, i.e., lists cannot refer to themselves, etc.
@@ -254,6 +256,31 @@ step_machine(Mach, <<$q, Index, Rest/binary>>) ->
     [Val | _] = Mach#mach.stack,
     NewMemo = dict:store(Index, Val, Mach#mach.memo),
     {Mach#mach{memo=NewMemo}, Rest};
+
+%% global
+step_machine(Mach, <<$c, Rest/binary>>) ->
+    [Module, Rest2] = binary:split(Rest, <<"\n">>),
+    [Name, Rest3] = binary:split(Rest2, <<"\n">>),
+    NewStack = [#'$global'{module=Module, name=Name} | Mach#mach.stack],
+    {Mach#mach{stack=NewStack}, Rest3};
+
+%% NEWOBJ
+step_machine(Mach, <<16#81, Rest/binary>>) ->
+    [Args, Cls | Stack1] = Mach#mach.stack,
+    NewStack = [#'$object'{class=Cls, new_args=Args} | Stack1],
+    {Mach#mach{stack=NewStack}, Rest};
+
+%% BUILD
+step_machine(Mach, <<$b, Rest/binary>>) ->
+    [State, Object | Stack1] = Mach#mach.stack,
+    NewStack = [Object#'$object'{state=State} | Stack1],
+    {Mach#mach{stack=NewStack}, Rest};
+
+%% BINUNICODE
+step_machine(Mach, <<$X, Len:32/integer-little, Rest/binary>>) ->
+    <<Unicoded:Len/binary, Rest2/binary>> = Rest,
+    NewStack = [Unicoded | Mach#mach.stack],
+    {Mach#mach{stack=NewStack}, Rest2};
 
 % end of pickle
 step_machine(Mach, <<$., Rest/binary>>) ->
