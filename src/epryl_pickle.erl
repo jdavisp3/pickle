@@ -273,7 +273,7 @@ step_machine(Mach, <<16#81, Rest/binary>>) ->
 %% BUILD
 step_machine(Mach, <<$b, Rest/binary>>) ->
     [State, Object | Stack1] = Mach#mach.stack,
-    NewStack = [Object#'$object'{state=State} | Stack1],
+    NewStack = [Object#'$object'{state=finalize(State)} | Stack1],
     {Mach#mach{stack=NewStack}, Rest};
 
 %% BINUNICODE
