@@ -571,7 +571,46 @@ pickle_to_term_test_() ->
      ?_assert(pickle_to_term(<<128, 2, 71, 191, 240, 0, 0, 0, 0, 0, 0, 46>>) == -1.0),
      ?_assert(pickle_to_term(<<128, 2, 71, 63, 248, 0, 0, 0, 0, 0, 0, 46>>) == 1.5),
      ?_assert(pickle_to_term(<<128, 2, 71, 68, 21, 175, 29, 120, 181, 140, 64, 46>>) == 1.0e20),
-     ?_assert(pickle_to_term(<<128, 2, 71, 196, 21, 175, 29, 120, 181, 140, 64, 46>>) == -1.0e20)
+     ?_assert(pickle_to_term(<<128, 2, 71, 196, 21, 175, 29, 120, 181, 140, 64, 46>>) == -1.0e20),
+     %% pickle.dumps(sum, protocol=2)
+     ?_assert(pickle_to_term(<<16#80, 2, $c, "__builtin__", $\n, "sum", $\n, $q, 0, $.>>)
+              == #'$global'{module = <<"__builtin__">>, name = <<"sum">>}),
+     %% class MyClass(object):
+     %% def __init__(self, arg, kwarg=None):
+     %%     self.arg = arg
+     %%     self.kwarg = kwarg
+     %% def __getstate__(self):
+     %%     return (self.arg, self.kwarg)
+     %% pickle.dumps(MyClass(1, 2), protocol=2)
+     ?_assert(pickle_to_term(
+                <<128,2,99,95,95,109,97,105,110,95,95,10,77,121,67,108,97,115,
+                  115,10,113,0,41,129,113,1,75,1,75,2,134,113,2,98,46>>)
+              == #'$object'{class = #'$global'{module = <<"__main__">>,
+                                               name = <<"MyClass">>},
+                            new_args = {},
+                            state = {1, 2}}),
+     %% class MyClass(object):
+     %% def __init__(self, arg, kwarg=None):
+     %%     self.arg = arg
+     %%     self.kwarg = kwarg
+     %% pickle.dumps(MyClass(1, 2), protocol=2)
+     ?_assert(pickle_to_term(
+               <<128,2,99,95,95,109,97,105,110,95,95,10,77,121,67,108,97,115,
+                 115,10,113,0,41, 129,113,1,125,113,2,40,85,5,107,119,97,114,
+                 103,113,3,75,2,85,3,97,114,103,113,4,75,1,117,98,46>>)
+              == #'$object'{class = #'$global'{module = <<"__main__">>,
+                                               name = <<"MyClass">>},
+                            new_args = {},
+                           state = dict:from_list(
+                                     [{<<"arg">>, 1}, {<<"kwarg">>, 2}])}),
+     %% pickle.dumps(
+     %%     [u'\u041f\u0440\u0438\u0432\u0435\u0442, \u043c\u0438\u0440!'],
+     %%     protocol=2)
+     ?_assert(pickle_to_term(
+                <<128,2,93,113,0,88,21,0,0,0,208,159,209,128,208,184,208,178,208,
+                  181,209,130,44,32,208,188,208,184,209,128,33,113,1,97,46>>)
+              == [<<208,159,209,128,208,184,208,178,208,
+                    181,209,130,44,32,208,188,208,184,209,128,33>>])
      ].
 
 term_to_pickle_test_() ->
