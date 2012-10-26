@@ -45,9 +45,9 @@
 %%    long                  number
 %%    dictionary            dict
 %%    float                 float
-%%    unicode               binary
-%%    object                #'$object'{} (record)
-%%    class / function      #'$global'{} (record)
+%%    unicode               #pickle_unicode{} (record)
+%%    object                #pickle_object{} (record)
+%%    class / function      #pickle_global{} (record)
 %% '''
 %% Recursive and mutually recursive references are not
 %% supported, i.e., lists cannot refer to themselves, etc.
@@ -261,25 +261,25 @@ step_machine(Mach, <<$q, Index, Rest/binary>>) ->
 step_machine(Mach, <<$c, Rest/binary>>) ->
     [Module, Rest2] = binary:split(Rest, <<"\n">>),
     [Name, Rest3] = binary:split(Rest2, <<"\n">>),
-    NewStack = [#'$global'{module=Module, name=Name} | Mach#mach.stack],
+    NewStack = [#pickle_global{module=Module, name=Name} | Mach#mach.stack],
     {Mach#mach{stack=NewStack}, Rest3};
 
 %% NEWOBJ
 step_machine(Mach, <<16#81, Rest/binary>>) ->
     [Args, Cls | Stack1] = Mach#mach.stack,
-    NewStack = [#'$object'{class=Cls, new_args=Args} | Stack1],
+    NewStack = [#pickle_object{class=Cls, new_args=Args} | Stack1],
     {Mach#mach{stack=NewStack}, Rest};
 
 %% BUILD
 step_machine(Mach, <<$b, Rest/binary>>) ->
     [State, Object | Stack1] = Mach#mach.stack,
-    NewStack = [Object#'$object'{state=finalize(State)} | Stack1],
+    NewStack = [Object#pickle_object{state=finalize(State)} | Stack1],
     {Mach#mach{stack=NewStack}, Rest};
 
 %% BINUNICODE
 step_machine(Mach, <<$X, Len:32/integer-little, Rest/binary>>) ->
     <<Unicoded:Len/binary, Rest2/binary>> = Rest,
-    NewStack = [Unicoded | Mach#mach.stack],
+    NewStack = [#pickle_unicode{value = Unicoded} | Mach#mach.stack],
     {Mach#mach{stack=NewStack}, Rest2};
 
 % end of pickle
@@ -574,7 +574,7 @@ pickle_to_term_test_() ->
      ?_assert(pickle_to_term(<<128, 2, 71, 196, 21, 175, 29, 120, 181, 140, 64, 46>>) == -1.0e20),
      %% pickle.dumps(sum, protocol=2)
      ?_assert(pickle_to_term(<<16#80, 2, $c, "__builtin__", $\n, "sum", $\n, $q, 0, $.>>)
-              == #'$global'{module = <<"__builtin__">>, name = <<"sum">>}),
+              == #pickle_global{module = <<"__builtin__">>, name = <<"sum">>}),
      %% class MyClass(object):
      %% def __init__(self, arg, kwarg=None):
      %%     self.arg = arg
@@ -585,8 +585,8 @@ pickle_to_term_test_() ->
      ?_assert(pickle_to_term(
                 <<128,2,99,95,95,109,97,105,110,95,95,10,77,121,67,108,97,115,
                   115,10,113,0,41,129,113,1,75,1,75,2,134,113,2,98,46>>)
-              == #'$object'{class = #'$global'{module = <<"__main__">>,
-                                               name = <<"MyClass">>},
+              == #pickle_object{class = #pickle_global{module = <<"__main__">>,
+                                                       name = <<"MyClass">>},
                             new_args = {},
                             state = {1, 2}}),
      %% class MyClass(object):
@@ -598,8 +598,8 @@ pickle_to_term_test_() ->
                <<128,2,99,95,95,109,97,105,110,95,95,10,77,121,67,108,97,115,
                  115,10,113,0,41, 129,113,1,125,113,2,40,85,5,107,119,97,114,
                  103,113,3,75,2,85,3,97,114,103,113,4,75,1,117,98,46>>)
-              == #'$object'{class = #'$global'{module = <<"__main__">>,
-                                               name = <<"MyClass">>},
+              == #pickle_object{class = #pickle_global{module = <<"__main__">>,
+                                                       name = <<"MyClass">>},
                             new_args = {},
                            state = dict:from_list(
                                      [{<<"arg">>, 1}, {<<"kwarg">>, 2}])}),
@@ -609,8 +609,9 @@ pickle_to_term_test_() ->
      ?_assert(pickle_to_term(
                 <<128,2,93,113,0,88,21,0,0,0,208,159,209,128,208,184,208,178,208,
                   181,209,130,44,32,208,188,208,184,209,128,33,113,1,97,46>>)
-              == [<<208,159,209,128,208,184,208,178,208,
-                    181,209,130,44,32,208,188,208,184,209,128,33>>])
+              == [#pickle_unicode{
+                     value = <<208,159,209,128,208,184,208,178,208,
+                               181,209,130,44,32,208,188,208,184,209,128,33>>}])
      ].
 
 term_to_pickle_test_() ->
