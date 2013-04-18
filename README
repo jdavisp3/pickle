@@ -1,4 +1,0 @@
-Epryl is a set of Erlang utilities for interfacing with Python code.
-
-NOTE: This repo is going to be split into two, one for the Pickle
-implementation and one for AMP.

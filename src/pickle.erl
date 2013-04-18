@@ -1,26 +1,42 @@
-%%% @author Dave Peticolas <dave@krondo.com>
-%%% @copyright (C) 2008-2011 Dave Peticolas
-%%% @doc
-%%% A module for converting Erlang terms to and from Python pickles.
-%%%
-%%% Python pickles are binary representations of Python objects.
-%%% See [http://python.org/dev/peps/pep-0307/] for details.
-%%%
-%%% @todo handle Python unicode strings
-%%% @todo handle limited Python objects
+%% Copyright (c) 2013, Dave Peticolas <dave@krondo.com>
+%%
+%% Permission to use, copy, modify, and/or distribute this software for any
+%% purpose with or without fee is hereby granted, provided that the above
+%% copyright notice and this permission notice appear in all copies.
+%%
+%% THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+%% WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+%% MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+%% ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+%% WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+%% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+%% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+%%
+%% @doc
+%% A module for converting Erlang terms to and from Python pickles.
+%%
+%% Python pickles are binary representations of Python objects.
+%% See [http://python.org/dev/peps/pep-0307/] for details.
 
--module(epryl_pickle).
+-module(pickle).
 
 %% API
 -export([pickle_to_term/1, term_to_pickle/1]).
 
+-ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--include("epryl_pickle.hrl").
+-endif.
+
+-include("pickle.hrl").
 
 -define(MAXINT, 2147483647). % threshold to switch to Python long ints
 
 % state of stack machine which implements pickle protocol
--record(mach, {stack=[], memo, done=false}).
+-record(mach, {
+          stack=[] :: list(),
+          memo :: dict(),
+          done=false :: boolean()
+         }).
 
 
 %% @doc Turn a Python pickle into an Erlang term.
@@ -52,7 +68,7 @@
 %% Recursive and mutually recursive references are not
 %% supported, i.e., lists cannot refer to themselves, etc.
 %%
-%% @spec pickle_to_term(Pickle::binary()) -> term()
+-spec pickle_to_term(Pickle::binary()) -> term().
 pickle_to_term(Pickle) when is_binary(Pickle) ->
     {Val, <<>>} = start_machine(Pickle),
     Val.
@@ -77,18 +93,16 @@ pickle_to_term(Pickle) when is_binary(Pickle) ->
 %%    bitstring             *not supported*
 %%    arbitrary atom        *not supported*
 %% '''
-%% @spec term_to_pickle(Term::term()) -> Pickle::binary()
+-spec term_to_pickle(Term::term()) -> Pickle::binary().
 term_to_pickle(Term) ->
     start_encode(Term).
 
 
-%%%===================================================================
 %%% Internal functions
-%%%===================================================================
 
 %% @private
 %% @doc Create a new stack machine record
-%% @spec new_mach() -> mach()
+-spec new_mach() -> #mach{}.
 new_mach() ->
     #mach{memo=dict:new()}.
 
@@ -97,7 +111,7 @@ new_mach() ->
 %% @doc Start running a new stack machine and return
 %% the result of running it. This function requires
 %% pickles to be at protocol version 2 or greater
-%% @spec start_machine(Pickle::binary()) -> {term(), binary()}
+-spec start_machine(Pickle::binary()) -> {term(), binary()}.
 start_machine(<<16#80, P, Rest/binary>> = _Pickle) when P >= 2 ->
     run_machine(new_mach(), Rest).
 
@@ -106,11 +120,11 @@ start_machine(<<16#80, P, Rest/binary>> = _Pickle) when P >= 2 ->
 %% @doc Run the given stack machine on a pickle, or
 %% the remains of one. The result of the run and the
 %% remains of the binary are returned.
-%% @spec run_machine(Mach::mach(), PickleRest::binary()) -> {term(), binary()}
+-spec run_machine(Mach::#mach{}, PickleRest::binary()) -> {term(), binary()}.
 run_machine(#mach{stack=[Val], done=true} = _Mach, Rest) ->
     {Val, Rest};
 run_machine(_Mach, <<>>) ->
-    erlang:error("Unexpected end of pickle.");
+    erlang:error(incomplete_pickle);
 run_machine(Mach, Rest) ->
     {NewMach, NewRest} = step_machine(Mach, Rest),
     run_machine(NewMach, NewRest).
@@ -119,8 +133,8 @@ run_machine(Mach, Rest) ->
 %% @private
 %% @doc Advance the stack machine one step and return the new state
 %% and the remaining pickle.
-%% @spec step_machine(Mach::mach(), PickleRest::binary()) ->
-%%                       {NewMach::mach(), NewPickleRest::binary()}
+-spec step_machine(Mach::#mach{}, PickleRest::binary()) ->
+                   {NewMach::#mach{}, NewPickleRest::binary()}.
 
 % 32-bit signed numbers
 step_machine(Mach, <<$J, Num:32/little-signed, Rest/binary>>) ->
@@ -292,7 +306,7 @@ step_machine(Mach, <<$., Rest/binary>>) ->
 %% @doc Transform an intermediate value created by
 %% the stack machine into its final form. Mainly used
 %% to reverse lists.
-%% @spec finalize(Val::term()) -> term()
+-spec finalize(Val::term()) -> term().
 finalize({list, List}) ->
     lists:reverse(List);
 finalize({dictionary, Dict}) ->
@@ -306,7 +320,7 @@ finalize(Val) ->
 %% The mark is discarded. A tuple with the slice of elements
 %% in front of the mark and the stack without the slice or
 %% the mark is returned.
-%% @spec pop_to_mark(Stack::list()) -> {Slice::list(), NewStack::list()}
+-spec pop_to_mark(Stack::list()) -> {Slice::list(), NewStack::list()}.
 pop_to_mark(Stack) ->
     pop_to_mark([], Stack).
 
@@ -318,7 +332,7 @@ pop_to_mark(Slice, [Val | Stack]) ->
 
 %% @private
 %% @doc Adds the slice to the list. The new list is returned.
-%% @spec add_slice(List::list(), Slice::list()) -> NewList::list()
+-spec add_slice(List::list(), Slice::list()) -> NewList::list().
 add_slice(List, []) ->
     List;
 add_slice(List, [Val | Slice]) ->
@@ -326,14 +340,14 @@ add_slice(List, [Val | Slice]) ->
 
 %% @private
 %% @doc Add the key-val pairs to the dict at the top of the stack.
-%% @spec set_items(Stack::list(), KeyVals::list()) -> NewStack::list()
+-spec set_items(Stack::list(), KeyVals::list()) -> NewStack::list().
 set_items([{dictionary, Dict} | Stack], KeyVals) ->
     NewDict = update_dict(Dict, KeyVals),
     [{dictionary, NewDict} | Stack].
 
 %% @private
 %% @doc Add the key-val pairs to the given dict. Return the new dict.
-%% @spec update_dict(Stack::list(), KeyVals::list()) -> NewStack::list()
+-spec update_dict(Dict::dict(), KeyVals::list()) -> NewStack::list().
 update_dict(Dict, []) ->
     Dict;
 update_dict(Dict, [Key, Val | KeyVals]) ->
@@ -342,15 +356,15 @@ update_dict(Dict, [Key, Val | KeyVals]) ->
 
 %% @private
 %% @doc encode the given Term as a Python pickle.
-%% @spec start_encode(Term::term()) -> Pickle::binary()
+-spec start_encode(Term::term()) -> Pickle::binary().
 start_encode(Term) ->
     IOList = finish_encode(encode_term(Term, [<<16#80, 2>>])),
-    list_to_binary(lists:reverse(IOList)).
+    iolist_to_binary(lists:reverse(IOList)).
 
 %% @private
 %% @doc encode a single Term into a Python pickle, given the
 %% pickle encoded so far as a reversed iolist.
-%% @spec encode_term(Term::term(), PickleSoFar::iolist()) -> Pickle::iolist()
+-spec encode_term(Term::term(), PickleSoFar::iolist()) -> Pickle::iolist().
 
 % None
 encode_term(none, Pickle) ->
@@ -390,11 +404,11 @@ encode_term({}, Pickle) ->
 % dictionaries
 encode_term(Dict, Pickle) when is_tuple(Dict), element(1, Dict) =:= dict ->
     NewPickle = [$} | Pickle],
-    case dict:size(Dict) > 0 of
-        true ->
-            [$u | encode_dict(Dict, [$( | NewPickle])];
-        false ->
-            NewPickle
+    case dict:size(Dict) of
+        0 ->
+            NewPickle;
+        _ ->
+            [$u | encode_dict(Dict, [$( | NewPickle])]
     end;
 
 % long integers
@@ -434,33 +448,32 @@ encode_term(List, Pickle) when is_list(List) ->
 
 %% @private
 %% @doc finish the encoding
-%% @spec finish_encode(Pickle::binary()) -> Pickle::binary()
+-spec finish_encode(Pickle::iolist()) -> Pickle::iolist().
 finish_encode(Pickle) ->
     ["." | Pickle].
 
 %% @private
 %% @doc Return the appropriate control code for a Python string
 %% of the given length.
-%% @spec string_header(Length::number()) -> char()
+-spec string_header(Length::non_neg_integer()) -> binary().
+string_header(Length) when Length < 256 ->
+    <<$U, Length>>;
 string_header(Length) ->
-    case Length < 256 of
-        true -> <<$U, Length>>;
-        false -> <<$T, Length:32/little-signed>>
-    end.
+    <<$T, Length:32/little-signed>>.
 
 %% @private
 %% @doc Return the appropriate control code for a Python Long
 %% of the given length in bytes.
-%% @spec long_header(NumBytes::number()) -> char()
+-spec long_header(NumBytes::pos_integer()) -> binary().
 long_header(NumBytes) when NumBytes >= 1, NumBytes =< 255 ->
     <<16#8a, NumBytes>>;
 long_header(NumBytes) ->
-    <<16#8b, NumBytes:32/signed-little>>.
+    <<16#8b, NumBytes:32/little-signed>>.
 
 %% @private
 %% @doc Return the encoding for a Python Long in a reversed list,
 %% except for the initial control character.
-%% @spec encode_long(Number::number(), Bytes::list(), NumBytes::number()) -> list()
+-spec encode_long(Number::number(), Bytes::list(byte()), NumBytes::non_neg_integer()) -> tuple().
 encode_long(Number, Bytes, NumBytes) when Number >= -128, Number =< 127 ->
     {[Number | Bytes], NumBytes + 1};
 encode_long(Number, Bytes, NumBytes) ->
@@ -469,7 +482,7 @@ encode_long(Number, Bytes, NumBytes) ->
 %% @private
 %% @doc Add the encoding for a tuple to the given iolist,
 %% except for the initial control character.
-%% @spec encode_tuple(Tuple::tuple(), Pickle::iolist(), Index::number()) -> iolist()
+-spec encode_tuple(Tuple::tuple(), Pickle::iolist(), Index::number()) -> iolist().
 encode_tuple(Tuple, Pickle, Index) when Index > size(Tuple) ->
     Pickle;
 encode_tuple(Tuple, Pickle, Index) ->
@@ -477,7 +490,7 @@ encode_tuple(Tuple, Pickle, Index) ->
 
 %% @private
 %% @doc Add the encoding for a list to the given iolist.
-%% @spec encode_list(List::list(), Pickle::iolist()) -> iolist()
+-spec encode_list(List::list(), Pickle::iolist()) -> iolist().
 encode_list([], Pickle) ->
     [$e | Pickle];
 encode_list([Term | List], Pickle) ->
@@ -485,45 +498,59 @@ encode_list([Term | List], Pickle) ->
 
 %% @private
 %% @doc Add the encoding for a dictionary to the given iolist.
-%% @spec encode_dict(Dict::dict(), Pickle::iolist()) -> iolist()
+-spec encode_dict(Dict::dict(), Pickle::iolist()) -> iolist().
 encode_dict(Dict, Pickle) ->
     dict:fold(fun encode_dict_kv/3, Pickle, Dict).
 
 %% @private
 %% @doc Add the encoding for a dictionary key/value pair to the given iolist.
-%% @spec encode_dict_kv(Key::term(), Value::term(), Pickle::iolist()) -> iolist()
+-spec encode_dict_kv(Key::term(), Value::term(), Pickle::iolist()) -> iolist().
 encode_dict_kv(Key, Value, Pickle) ->
     encode_term(Value, encode_term(Key, Pickle)).
 
 
 % Tests
 
+-ifdef(TEST).
+
+big_string_pickle() ->
+    Start = <<16#80, 2, $T, 0, 1, 0, 0>>,
+    Middle = big_string(),
+    <<Start/binary, Middle/binary, $.>>.
+
+big_string() ->
+    binary:copy(<<$a>>, 256).
+
 pickle_to_term_test_() ->
     [
-     ?_assert(pickle_to_term(<<16#80, 2, $J, 0, 0, 0, 0, $.>>) == 0),
-     ?_assert(pickle_to_term(<<16#80, 2, $J, 255, 0, 0, 0, $.>>) == 255),
-     ?_assert(pickle_to_term(<<16#80, 2, $J, 0, 0, 0, 128, $.>>) == -math:pow(2, 31)),
-     ?_assert(pickle_to_term(<<16#80, 2, $K, 1, $.>>) == 1),
-     ?_assert(pickle_to_term(<<16#80, 2, $K, 255, $.>>) == 255),
-     ?_assert(pickle_to_term(<<16#80, 2, $M, 255, 0, $.>>) == 255),
-     ?_assert(pickle_to_term(<<16#80, 2, $M, 255, 255, $.>>) == 65535),
-     ?_assert(pickle_to_term(<<16#80, 2, $N, $.>>) == none),
-     ?_assert(pickle_to_term(<<16#80, 2, $T, 0, 0, 0, 0, $q, 0, $.>>) == <<>>),
-     ?_assert(pickle_to_term(<<16#80, 2, $T, 3, 0, 0, 0,
-                              "abc", $q, 0, $.>>) == <<"abc">>),
-     ?_assert(pickle_to_term(<<16#80, 2, $U, 0, $q, 0, $.>>) == <<>>),
-     ?_assert(pickle_to_term(<<16#80, 2, $U, 1, $a, $q, 0, $.>>) == <<"a">>),
-     ?_assert(pickle_to_term(<<16#80, 2, 16#8a, 0, $.>>) == 0),
-     ?_assert(pickle_to_term(<<16#80, 2, 16#8a, 1, 1, $.>>) == 1),
-     ?_assert(pickle_to_term(<<16#80, 2, 16#8a, 2, 255, 0, $.>>) == 255),
-     ?_assert(pickle_to_term(<<16#80, 2, 16#8a, 4,
-                               16#80, 16#96, 16#98, 16#0, $.>>) == 10000000),
-     ?_assert(pickle_to_term(<<16#80, 2, 16#8a, 1, 16#f1, $.>>) == -15),
+     ?_assertError(incomplete_pickle, pickle_to_term(<<16#80, 2>>)),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, $J, 0, 0, 0, 0, $.>>), 0),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, $J, 255, 0, 0, 0, $.>>), 255),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, $J, 0, 0, 0, 128, $.>>),
+                   trunc(-math:pow(2, 31))),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, $K, 1, $.>>), 1),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, $K, 255, $.>>), 255),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, $M, 255, 0, $.>>), 255),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, $M, 255, 255, $.>>), 65535),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, $N, $.>>), none),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, $T, 0, 0, 0, 0, $q, 0, $.>>),
+                   <<>>),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, $T, 3, 0, 0, 0,
+                                    "abc", $q, 0, $.>>), <<"abc">>),
+     ?_assertEqual(pickle_to_term(big_string_pickle()), big_string()),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, $U, 0, $q, 0, $.>>), <<>>),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, $U, 1, $a, $q, 0, $.>>), <<"a">>),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, 16#8a, 0, $.>>), 0),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, 16#8a, 1, 1, $.>>), 1),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, 16#8a, 2, 255, 0, $.>>), 255),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, 16#8a, 4, 16#80,
+                                    16#96, 16#98, 16#0, $.>>), 10000000),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, 16#8a, 1, 16#f1, $.>>), -15),
      ?_assert(pickle_to_term(<<16#80, 2, 16#8b, 2, 0, 0, 0, 255, 0, $.>>) == 255),
      ?_assert(pickle_to_term(<<16#80, 2, 16#8b, 2, 0, 0, 0, 255, 16#7f, $.>>) == 32767),
      ?_assert(pickle_to_term(<<16#80, 2, 16#8b, 2, 0, 0, 0, 0, 255, $.>>) == -256),
      ?_assert(pickle_to_term(<<16#80, 2, 16#8b, 0, 0, 0, 0, $.>>) == 0),
-     ?_assert(pickle_to_term(<<16#80, 2, 16#88, $.>>) == true),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, 16#88, $.>>), true),
      ?_assert(pickle_to_term(<<16#80, 2, 16#89, $.>>) == false),
      ?_assert(pickle_to_term(<<16#80, 2, "]", $.>>) == []),
      ?_assert(pickle_to_term(<<16#80, 2, "]", "q", 0, "K", 1, "a", $.>>) == [1]),
@@ -616,19 +643,21 @@ pickle_to_term_test_() ->
 
 term_to_pickle_test_() ->
     [
-     ?_assert(term_to_pickle(0) == <<16#80, 2, "K", 0, $.>>),
-     ?_assert(term_to_pickle(255) == <<16#80, 2, "K", 255, $.>>),
-     ?_assert(term_to_pickle(256) == <<16#80, 2, "M", 0, 1, $.>>),
-     ?_assert(term_to_pickle(65535) == <<16#80, 2, "M", 255, 255, $.>>),
-     ?_assert(term_to_pickle(-1) == <<16#80, 2, "J", 255, 255, 255, 255, $.>>),
-     ?_assert(term_to_pickle(65536) == <<16#80, 2, "J", 0, 0, 1, 0, $.>>),
-     ?_assert(term_to_pickle(2147483648) == <<16#80, 2, 138, 5, 0, 0, 0, 128, 0, $.>>),
-     ?_assert(term_to_pickle(1 bsl 2048) == <<16#80, 2, 139, 1, 1,
-                                             0:258/unit:8, 1, $.>>),
+     ?_assertEqual(term_to_pickle(0), <<16#80, 2, "K", 0, $.>>),
+     ?_assertEqual(term_to_pickle(255), <<16#80, 2, "K", 255, $.>>),
+     ?_assertEqual(term_to_pickle(256), <<16#80, 2, "M", 0, 1, $.>>),
+     ?_assertEqual(term_to_pickle(65535), <<16#80, 2, "M", 255, 255, $.>>),
+     ?_assertEqual(term_to_pickle(-1), <<16#80, 2, "J", 255, 255, 255, 255, $.>>),
+     ?_assertEqual(term_to_pickle(65536), <<16#80, 2, "J", 0, 0, 1, 0, $.>>),
+     ?_assertEqual(term_to_pickle(2147483648),
+                   <<16#80, 2, 138, 5, 0, 0, 0, 128, 0, $.>>),
+     ?_assertEqual(term_to_pickle(1 bsl 2048),
+                   <<16#80, 2, 139, 1, 1, 0:258/unit:8, 1, $.>>),
      ?_assert(term_to_pickle(none) == <<16#80, 2, "N", $.>>),
      ?_assert(term_to_pickle(true) == <<16#80, 2, 16#88, $.>>),
      ?_assert(term_to_pickle(false) == <<16#80, 2, 16#89, $.>>),
      ?_assert(term_to_pickle(<<"test">>) == <<16#80, 2, "U", 4, "test", $.>>),
+     ?_assertEqual(term_to_pickle(big_string()), big_string_pickle()),
      ?_assert(term_to_pickle({}) == <<16#80, 2, $), $.>>),
      ?_assert(term_to_pickle({1}) == <<16#80, 2, $K, 1, 16#85, $.>>),
      ?_assert(term_to_pickle({1, 2}) == <<16#80, 2, $K, 1, $K, 2, 16#86, $.>>),
@@ -651,18 +680,13 @@ term_to_pickle_test_() ->
 
 
 dicts_are_same(D1, D2) ->
-    S1 = dict:size(D1),
-    S2 = dict:size(D2),
-    case S1 =:= S2 of
-        false ->
-            false;
-        true ->
-            Check = fun(Key) ->
-                            {ok, V} = dict:find(Key, D1),
-                            {ok, V} =:= dict:find(Key, D2)
-                    end,
-            lists:all(Check, dict:fetch_keys(D1))
-    end.
+    S = dict:size(D1),
+    S = dict:size(D2),
+    Check = fun(Key) ->
+                    {ok, V} = dict:find(Key, D1),
+                    {ok, V} =:= dict:find(Key, D2)
+            end,
+    lists:all(Check, dict:fetch_keys(D1)).
 
 dict_from_keys(Keys) ->
     dict_from_keys(Keys, dict:new()).
@@ -671,3 +695,5 @@ dict_from_keys([], D) ->
     D;
 dict_from_keys([Key | Keys], D) ->
     dict_from_keys(Keys, dict:store(Key, none, D)).
+
+-endif.

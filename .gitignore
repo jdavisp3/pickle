@@ -1,4 +1,6 @@
-_build
-*.beam
 .eunit
-.test
+deps
+ebin
+logs
+erl_crash.dump
+test/*.beam
