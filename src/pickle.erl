@@ -144,7 +144,7 @@ step_machine(Mach, <<$J, Num:32/little-signed, Rest/binary>>) ->
 %% INT
 step_machine(Mach, <<$I, Rest/binary>>) ->
   [BinInt, Rest2] = binary:split(Rest, <<10>>, []),
-  NewStack = [erlang:binary_to_integer(BinInt) | Mach#mach.stack],
+  NewStack = [list_to_integer(binary_to_list(BinInt)) | Mach#mach.stack],
   {Mach#mach{stack=NewStack}, Rest2};
 
 % byte numbers
