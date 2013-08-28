@@ -265,11 +265,17 @@ step_machine(Mach, <<$u, Rest/binary>>) ->
     NewStack = set_items(Stack, KeyVals),
     {Mach#mach{stack=NewStack}, Rest};
 
-% set to memo
+% BINPUT set to memo
 step_machine(Mach, <<$q, Index, Rest/binary>>) ->
     [Val | _] = Mach#mach.stack,
     NewMemo = dict:store(Index, Val, Mach#mach.memo),
     {Mach#mach{memo=NewMemo}, Rest};
+
+%% BINGET
+step_machine(Mach, <<$h, Index, Rest/binary>>) ->
+    Obj = dict:fetch(Index, Mach#mach.memo),
+    NewStack = [Obj | Mach#mach.stack],
+    {Mach#mach{stack=NewStack}, Rest};
 
 %% global
 step_machine(Mach, <<$c, Rest/binary>>) ->
@@ -638,7 +644,11 @@ pickle_to_term_test_() ->
                   181,209,130,44,32,208,188,208,184,209,128,33,113,1,97,46>>)
               == [#pickle_unicode{
                      value = <<208,159,209,128,208,184,208,178,208,
-                               181,209,130,44,32,208,188,208,184,209,128,33>>}])
+                               181,209,130,44,32,208,188,208,184,209,128,33>>}]),
+     %% o = []
+     %% pickle.dumps((o, o), protocol=2)
+     ?_assertEqual(pickle_to_term(<<16#80, 2, $], $q, 0, $h, 0, 16#86, $q, 1, $.>>),
+             {[], []})
      ].
 
 term_to_pickle_test_() ->
