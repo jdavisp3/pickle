@@ -265,11 +265,17 @@ step_machine(Mach, <<$u, Rest/binary>>) ->
     NewStack = set_items(Stack, KeyVals),
     {Mach#mach{stack=NewStack}, Rest};
 
-% set to memo
+% BINPUT set to memo
 step_machine(Mach, <<$q, Index, Rest/binary>>) ->
     [Val | _] = Mach#mach.stack,
     NewMemo = dict:store(Index, Val, Mach#mach.memo),
     {Mach#mach{memo=NewMemo}, Rest};
+
+%% BINGET
+step_machine(Mach, <<$h, Index, Rest/binary>>) ->
+    Obj = dict:fetch(Index, Mach#mach.memo),
+    NewStack = [Obj | Mach#mach.stack],
+    {Mach#mach{stack=NewStack}, Rest};
 
 %% global
 step_machine(Mach, <<$c, Rest/binary>>) ->
