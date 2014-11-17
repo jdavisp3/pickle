@@ -143,7 +143,7 @@ step_machine(Mach, <<$J, Num:32/little-signed, Rest/binary>>) ->
 
 %% INT
 step_machine(Mach, <<$I, Rest/binary>>) ->
-  [BinInt, Rest2] = binary:split(Rest, <<10>>, []),
+  [BinInt, Rest2] = binary:split(Rest, <<$\n>>, []),
   NewStack = [list_to_integer(binary_to_list(BinInt)) | Mach#mach.stack],
   {Mach#mach{stack=NewStack}, Rest2};
 
@@ -536,6 +536,9 @@ big_string() ->
 pickle_to_term_test_() ->
     [
      ?_assertError(incomplete_pickle, pickle_to_term(<<16#80, 2>>)),
+     %% pickle.dumps(255, protocol=0) - v0 actually don't prepend version
+     ?_assertEqual(pickle_to_term(<<16#80, 2, $I, "255", $\n, $.>>), 255),
+     %% pickle.dumps(-1, protocol=2)
      ?_assertEqual(pickle_to_term(<<16#80, 2, $J, 0, 0, 0, 0, $.>>), 0),
      ?_assertEqual(pickle_to_term(<<16#80, 2, $J, 255, 0, 0, 0, $.>>), 255),
      ?_assertEqual(pickle_to_term(<<16#80, 2, $J, 0, 0, 0, 128, $.>>),
