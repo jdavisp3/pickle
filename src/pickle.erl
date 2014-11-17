@@ -141,6 +141,12 @@ step_machine(Mach, <<$J, Num:32/little-signed, Rest/binary>>) ->
     NewStack = [Num | Mach#mach.stack],
     {Mach#mach{stack=NewStack}, Rest};
 
+%% INT
+step_machine(Mach, <<$I, Rest/binary>>) ->
+  [BinInt, Rest2] = binary:split(Rest, <<10>>, []),
+  NewStack = [list_to_integer(binary_to_list(BinInt)) | Mach#mach.stack],
+  {Mach#mach{stack=NewStack}, Rest2};
+
 % byte numbers
 step_machine(Mach, <<$K, Num, Rest/binary>>) ->
     NewStack = [Num | Mach#mach.stack],
