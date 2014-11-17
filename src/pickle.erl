@@ -543,6 +543,8 @@ pickle_to_term_test_() ->
      ?_assertEqual(pickle_to_term(<<16#80, 2, $J, 255, 0, 0, 0, $.>>), 255),
      ?_assertEqual(pickle_to_term(<<16#80, 2, $J, 0, 0, 0, 128, $.>>),
                    trunc(-math:pow(2, 31))),
+     ?_assertEqual(pickle_to_term(<<16#80, 2, $J, 255, 255, 255, 255, $.>>), -1),
+
      ?_assertEqual(pickle_to_term(<<16#80, 2, $K, 1, $.>>), 1),
      ?_assertEqual(pickle_to_term(<<16#80, 2, $K, 255, $.>>), 255),
      ?_assertEqual(pickle_to_term(<<16#80, 2, $M, 255, 0, $.>>), 255),
