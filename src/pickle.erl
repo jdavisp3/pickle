@@ -109,11 +109,13 @@ new_mach() ->
 
 %% @private
 %% @doc Start running a new stack machine and return
-%% the result of running it. This function requires
-%% pickles to be at protocol version 2 or greater
+%% the result of running it.
 -spec start_machine(Pickle::binary()) -> {term(), binary()}.
 start_machine(<<16#80, P, Rest/binary>> = _Pickle) when P >= 2 ->
-    run_machine(new_mach(), Rest).
+    run_machine(new_mach(), Rest);
+start_machine(Pickle) ->
+    %% protocol < 2
+    run_machine(new_mach(), Pickle).
 
 
 %% @private
@@ -659,7 +661,10 @@ pickle_to_term_test_() ->
      %% o = []
      %% pickle.dumps((o, o), protocol=2)
      ?_assertEqual(pickle_to_term(<<16#80, 2, $], $q, 0, $h, 0, 16#86, $q, 1, $.>>),
-             {[], []})
+             {[], []}),
+
+     %% pickle < 2 - no protocol version prefix
+     ?_assertEqual(pickle_to_term(<<$G, 63, 241, 153, 153, 153, 153, 153, 154, $.>>), 1.1)
      ].
 
 term_to_pickle_test_() ->
