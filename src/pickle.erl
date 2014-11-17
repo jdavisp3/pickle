@@ -21,7 +21,7 @@
 -module(pickle).
 
 %% API
--export([pickle_to_term/1, term_to_pickle/1]).
+-export([pickle_to_term/1, term_to_pickle/1, term_to_pickle/2]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -38,6 +38,11 @@
           done=false :: boolean()
          }).
 
+%% pickler options
+-record(encoder, {
+          proto=2 :: 0..2,
+          bin=true :: boolean()
+         }).
 
 %% @doc Turn a Python pickle into an Erlang term.
 %%
@@ -95,7 +100,13 @@ pickle_to_term(Pickle) when is_binary(Pickle) ->
 %% '''
 -spec term_to_pickle(Term::term()) -> Pickle::binary().
 term_to_pickle(Term) ->
-    start_encode(Term).
+    %% protocol v2 by default, unlike python's v0
+    term_to_pickle(Term, 2).
+
+-spec term_to_pickle(Term::term(), Protocol::0..2) -> Pickle::binary().
+term_to_pickle(Term, Protocol) when (Protocol >= 0) and (Protocol =< 2) ->
+    start_encode(Term, #encoder{proto=trunc(Protocol),
+                                bin=Protocol >= 1}).
 
 
 %%% Internal functions
@@ -370,95 +381,132 @@ update_dict(Dict, [Key, Val | KeyVals]) ->
 
 %% @private
 %% @doc encode the given Term as a Python pickle.
--spec start_encode(Term::term()) -> Pickle::binary().
-start_encode(Term) ->
-    IOList = finish_encode(encode_term(Term, [<<16#80, 2>>])),
+-spec start_encode(Term::term(), Encoder::#encoder{}) -> Pickle::binary().
+start_encode(Term, #encoder{proto=Proto} = Encoder) ->
+    Initial = if Proto >= 2 ->
+                      [<<16#80, Proto>>];
+                 true ->
+                      []
+              end,
+    IOList = finish_encode(encode_term(Term, Initial, Encoder)),
     iolist_to_binary(lists:reverse(IOList)).
 
 %% @private
 %% @doc encode a single Term into a Python pickle, given the
 %% pickle encoded so far as a reversed iolist.
--spec encode_term(Term::term(), PickleSoFar::iolist()) -> Pickle::iolist().
+-spec encode_term(Term::term(), PickleSoFar::iolist(), Encoder::#encoder{}) ->
+                         Pickle::iolist().
 
 % None
-encode_term(none, Pickle) ->
+encode_term(none, Pickle, _) ->
     ["N" | Pickle];
 
 % True
-encode_term(true, Pickle) ->
+encode_term(true, Pickle, #encoder{proto=P}) when P >= 2 ->
     [16#88 | Pickle];
+encode_term(true, Pickle, _) ->
+    [<<"I01\n">> | Pickle];
 
 % False
-encode_term(false, Pickle) ->
+encode_term(false, Pickle, #encoder{proto=P}) when P >= 2 ->
     [16#89 | Pickle];
+encode_term(false, Pickle, _) ->
+    [<<"I00\n">> | Pickle];
+
+%% floats in text protocol
+encode_term(Number, Pickle, #encoder{bin=false}) when is_float(Number) ->
+    %% float_to_binary/1 creates more verbose output
+    [<<$F, (iolist_to_binary(io_lib:format("~w", [Number])))/binary, $\n>> | Pickle];
+
+%% integer / long in text protocol
+encode_term(Number, Pickle, #encoder{bin=false})
+  when is_number(Number), ((Number =< ?MAXINT) and (Number >= (-1 * ?MAXINT - 1))) ->
+    %% [-2147483648, 2147483647]
+    [<<$I, (list_to_binary(integer_to_list(Number)))/binary, $\n>> | Pickle];
+encode_term(Number, Pickle, #encoder{bin=false}) when is_number(Number) ->
+    [<<$L, (list_to_binary(integer_to_list(Number)))/binary, $L, $\n>> | Pickle];
 
 % floats
-encode_term(Number, Pickle) when is_float(Number) ->
+encode_term(Number, Pickle, _) when is_float(Number) ->
     [<<$G, Number/big-signed-float>> | Pickle];
 
 % tiny integers
-encode_term(Number, Pickle)
+encode_term(Number, Pickle, _)
   when is_number(Number), Number >= 0, Number =< 255 ->
     [<<$K, Number>> | Pickle];
 
 % medium integers
-encode_term(Number, Pickle)
+encode_term(Number, Pickle, _)
   when is_number(Number), Number >= 256, Number =< 65535 ->
     [<<$M, Number:16/little-unsigned>> | Pickle];
 
 % big integers
-encode_term(Number, Pickle)
+encode_term(Number, Pickle, _)
   when is_number(Number), Number =< ?MAXINT ->
     [<<$J, Number:32/little-signed>> | Pickle];
 
 % empty tuples
-encode_term({}, Pickle) ->
+encode_term({}, Pickle, #encoder{proto=0}) ->
+    [<<$(, $t>> | Pickle];
+encode_term({}, Pickle, _) ->
     [$) | Pickle];
 
 % dictionaries
-encode_term(Dict, Pickle) when is_tuple(Dict), element(1, Dict) =:= dict ->
+encode_term(Dict, Pickle, #encoder{bin=true} = Encoder)
+  when is_tuple(Dict), element(1, Dict) =:= dict ->
     NewPickle = [$} | Pickle],
     case dict:size(Dict) of
         0 ->
             NewPickle;
         _ ->
-            [$u | encode_dict(Dict, [$( | NewPickle])]
+            [$u | encode_dict(Dict, [$( | NewPickle], Encoder)]
     end;
+encode_term(Dict, Pickle, Encoder)
+  when is_tuple(Dict), element(1, Dict) =:= dict ->
+    encode_dict(Dict, [<<$(, $d>> | Pickle], Encoder);
 
 % long integers
-encode_term(Number, Pickle) when is_number(Number) ->
+encode_term(Number, Pickle, _) when is_number(Number) ->
     {Encoding, NumBytes} = encode_long(Number, [], 0),
     Header = long_header(NumBytes),
     [lists:reverse(Encoding), Header | Pickle];
 
 % binaries (Python strings)
-encode_term(Binary, Pickle) when is_binary(Binary) ->
+encode_term(Binary, Pickle, #encoder{bin=false}) when is_binary(Binary) ->
+    [$\n, $', repr_string(Binary), $', $S | Pickle];
+encode_term(Binary, Pickle, _) when is_binary(Binary) ->
     P1 = [string_header(size(Binary)) | Pickle],
     [Binary | P1];
 
 % 1-tuples
-encode_term({Term}, Pickle) ->
-    [16#85 | encode_term(Term, Pickle)];
+encode_term({Term}, Pickle, #encoder{proto=P} = Encoder) when P >= 2 ->
+    [16#85 | encode_term(Term, Pickle, Encoder)];
 
 % 2-tuples
-encode_term({T1, T2}, Pickle) ->
-    [16#86 | encode_term(T2, encode_term(T1, Pickle))];
+encode_term({T1, T2}, Pickle, #encoder{proto=P} = Encoder) when P >= 2 ->
+    [16#86 | encode_term(T2, encode_term(T1, Pickle, Encoder), Encoder)];
 
 % 3-tuples
-encode_term({T1, T2, T3}, Pickle) ->
-    [16#87 | encode_term(T3, encode_term(T2, encode_term(T1, Pickle)))];
+encode_term({T1, T2, T3}, Pickle, #encoder{proto=P} = Encoder) when P >= 2 ->
+    T1P = encode_term(T1, Pickle, Encoder),
+    T2P = encode_term(T2, T1P, Encoder),
+    [16#87 | encode_term(T3, T2P, Encoder)];
 
-% big tuples
-encode_term(Tuple, Pickle) when is_tuple(Tuple) ->
-    [$t | encode_tuple(Tuple, [$( | Pickle], 1)];
+% big tuples or proto < 2
+encode_term(Tuple, Pickle, Encoder) when is_tuple(Tuple) ->
+    [$t | encode_tuple(Tuple, [$( | Pickle], 1, Encoder)];
 
 % empty lists
-encode_term([], Pickle) ->
+encode_term([], Pickle, #encoder{bin=false}) ->
+    [<<$(, $l>> | Pickle];
+encode_term([], Pickle, _) ->
     [$] | Pickle];
 
 % non-empty lists
-encode_term(List, Pickle) when is_list(List) ->
-    encode_list(List, [$(, $] | Pickle]).
+encode_term(List, Pickle, #encoder{bin=true} = Encoder) when is_list(List) ->
+    encode_list_bin(List, [$(, $] | Pickle], Encoder);
+encode_term(List, Pickle, #encoder{bin=false} = Encoder) when is_list(List) ->
+    encode_list_txt(List, [<<$(, $l>> | Pickle], Encoder).
 
 %% @private
 %% @doc finish the encoding
@@ -496,32 +544,68 @@ encode_long(Number, Bytes, NumBytes) ->
 %% @private
 %% @doc Add the encoding for a tuple to the given iolist,
 %% except for the initial control character.
--spec encode_tuple(Tuple::tuple(), Pickle::iolist(), Index::number()) -> iolist().
-encode_tuple(Tuple, Pickle, Index) when Index > size(Tuple) ->
+-spec encode_tuple(Tuple::tuple(), Pickle::iolist(),
+                   Index::number(), Encoder::#encoder{}) -> iolist().
+encode_tuple(Tuple, Pickle, Index, _) when Index > size(Tuple) ->
     Pickle;
-encode_tuple(Tuple, Pickle, Index) ->
-    encode_tuple(Tuple, encode_term(element(Index, Tuple), Pickle), Index + 1).
+encode_tuple(Tuple, Pickle, Index, Encoder) ->
+    PElement = encode_term(element(Index, Tuple), Pickle, Encoder),
+    encode_tuple(Tuple, PElement, Index + 1, Encoder).
 
 %% @private
-%% @doc Add the encoding for a list to the given iolist.
--spec encode_list(List::list(), Pickle::iolist()) -> iolist().
-encode_list([], Pickle) ->
+%% @doc Add the encoding for a list to the given iolist; protocol > 0
+-spec encode_list_bin(List::list(), Pickle::iolist(), Encoder::#encoder{}) -> iolist().
+encode_list_bin([], Pickle, _) ->
     [$e | Pickle];
-encode_list([Term | List], Pickle) ->
-    encode_list(List, encode_term(Term, Pickle)).
+encode_list_bin([Term | List], Pickle, Encoder) ->
+    PElement = encode_term(Term, Pickle, Encoder),
+    encode_list_bin(List, PElement, Encoder).
+
+%% @private
+%% @doc Add the encoding for a list to the given iolist; protocol 0
+encode_list_txt([], Pickle, _) ->
+    Pickle;
+encode_list_txt([Term | List], Pickle, Encoder) ->
+    PElement = [$a | encode_term(Term, Pickle, Encoder)],
+    encode_list_txt(List, PElement, Encoder).
+
 
 %% @private
 %% @doc Add the encoding for a dictionary to the given iolist.
--spec encode_dict(Dict::dict(), Pickle::iolist()) -> iolist().
-encode_dict(Dict, Pickle) ->
-    dict:fold(fun encode_dict_kv/3, Pickle, Dict).
+-spec encode_dict(Dict::dict(), Pickle::iolist(), Encoder::#encoder{}) -> iolist().
+encode_dict(Dict, Pickle, Encoder) ->
+    {ResPickle, _} = dict:fold(fun encode_dict_kv/3, {Pickle, Encoder}, Dict),
+    ResPickle.
 
 %% @private
 %% @doc Add the encoding for a dictionary key/value pair to the given iolist.
 -spec encode_dict_kv(Key::term(), Value::term(), Pickle::iolist()) -> iolist().
-encode_dict_kv(Key, Value, Pickle) ->
-    encode_term(Value, encode_term(Key, Pickle)).
+encode_dict_kv(Key, Value, {Pickle, #encoder{bin=true} = Encoder}) ->
+    PKey = encode_term(Key, Pickle, Encoder),
+    {encode_term(Value, PKey, Encoder), Encoder};
+encode_dict_kv(Key, Value, {Pickle, Encoder}) ->
+    PKey = encode_term(Key, Pickle, Encoder),
+    {[$s | encode_term(Value, PKey, Encoder)], Encoder}.
 
+
+
+%% @private
+%% @doc like python's repr() for binary string
+-spec repr_string(ByteString::binary()) -> ReprString::binary().
+repr_string(Bin) ->
+    << <<(repr_char(C))/binary>> || <<C>> <= Bin>>.
+
+repr_char($\t) -> <<"\\t">>;
+repr_char($\n) -> <<"\\n">>;
+repr_char($\r) -> <<"\\r">>;
+repr_char($\\) -> <<"\\\\">>;
+repr_char($') -> <<"\\'">>;
+repr_char(C) when (C >= 32), (C =< $~) -> <<C>>;
+repr_char(C) ->
+    HChar = fun(N) when N < 10 -> $0 + N;
+               (N) when N < 16 -> $W + N
+            end,
+    <<$\\, $x, (HChar(C div 16)), (HChar(C rem 16))>>.
 
 % Tests
 
@@ -704,6 +788,58 @@ term_to_pickle_test_() ->
      ?_assertEqual(term_to_pickle(-1.0e20), <<128, 2, 71, 196, 21, 175, 29, 120, 181, 140, 64, 46>>)
 ].
 
+term_to_pickle_v0_test_() ->
+    TTP0 = fun(Term) -> term_to_pickle(Term, 0) end,
+    [
+     %% booleans
+     ?_assertEqual(<<"I01\n.">>, TTP0(true)),
+     ?_assertEqual(<<"I00\n.">>, TTP0(false)),
+     %% floats
+     ?_assertEqual(<<"F1.1\n.">>, TTP0(1.1)),
+     ?_assertEqual(<<"F-1.1\n.">>, TTP0(-1.1)),
+     %% int / long int
+     ?_assertEqual(<<"I1\n.">>, TTP0(1)),
+     ?_assertEqual(<<"L2147483648L\n.">>, TTP0(2147483648)),
+     ?_assertEqual(<<"L-2147483649L\n.">>, TTP0(-2147483649)),
+     ?_assertEqual(<<"I-2147483648\n.">>, TTP0(-2147483648)),
+     %% bytestring
+     %% pickletools.optimize(pickle.dumps(''.join(chr(i) for i in range(256)), protocol=0))
+     ?_assertEqual(
+        <<"S\'\\x00\\x01\\x02\\x03\\x04\\x05\\x06\\x07\\x08\\t\\n\\x0b\\x0c\\r"
+          "\\x0e\\x0f\\x10\\x11\\x12\\x13\\x14\\x15\\x16\\x17\\x18\\x19\\x1a"
+          "\\x1b\\x1c\\x1d\\x1e\\x1f !\"#$%&\\\'()*+,-./0123456789:;<=>?@ABCDEF"
+          "GHIJKLMNOPQRSTUVWXYZ[\\\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\\x7f"
+          "\\x80\\x81\\x82\\x83\\x84\\x85\\x86\\x87\\x88\\x89\\x8a\\x8b\\x8c"
+          "\\x8d\\x8e\\x8f\\x90\\x91\\x92\\x93\\x94\\x95\\x96\\x97\\x98\\x99"
+          "\\x9a\\x9b\\x9c\\x9d\\x9e\\x9f\\xa0\\xa1\\xa2\\xa3\\xa4\\xa5\\xa6"
+          "\\xa7\\xa8\\xa9\\xaa\\xab\\xac\\xad\\xae\\xaf\\xb0\\xb1\\xb2\\xb3"
+          "\\xb4\\xb5\\xb6\\xb7\\xb8\\xb9\\xba\\xbb\\xbc\\xbd\\xbe\\xbf\\xc0"
+          "\\xc1\\xc2\\xc3\\xc4\\xc5\\xc6\\xc7\\xc8\\xc9\\xca\\xcb\\xcc\\xcd"
+          "\\xce\\xcf\\xd0\\xd1\\xd2\\xd3\\xd4\\xd5\\xd6\\xd7\\xd8\\xd9\\xda"
+          "\\xdb\\xdc\\xdd\\xde\\xdf\\xe0\\xe1\\xe2\\xe3\\xe4\\xe5\\xe6\\xe7"
+          "\\xe8\\xe9\\xea\\xeb\\xec\\xed\\xee\\xef\\xf0\\xf1\\xf2\\xf3\\xf4"
+          "\\xf5\\xf6\\xf7\\xf8\\xf9\\xfa\\xfb\\xfc\\xfd\\xfe\\xff\'\n.">>,
+        TTP0(<< <<C>> || C <- lists:seq(0, 255) >>)),
+     %% tuples
+     ?_assertEqual(<<"(t.">>, TTP0({})),
+     ?_assertEqual(<<"(I1\nt.">>, TTP0({1})),
+     ?_assertEqual(<<"(I1\nI2\nI3\nI4\nt.">>, TTP0({1, 2, 3, 4})),
+     %% lists
+     ?_assertEqual(<<"(l.">>, TTP0([])),
+     ?_assertEqual(<<"(lI1\naI2\naI3\na.">>, TTP0([1, 2, 3])),
+     %% dict; XXX: dict traversal order isn't defined, so this may fall at some point
+     ?_assertEqual(<<"(dI1\nI1\nsI2\nI2\nsI3\nI3\ns.">>,
+                   TTP0(dict:from_list([{1, 1}, {2, 2}, {3, 3}])))
+    ].
+
+
+term_to_pickle_v1_test_() ->
+    TTP1 = fun(Term) -> term_to_pickle(Term, 1) end,
+    [
+     ?_assertEqual(<<").">>, TTP1({})),
+     ?_assertEqual(<<"(K\x01t.">>, TTP1({1})),
+     ?_assertEqual(<<"(K\x01K\x02K\x03K\x04t.">>, TTP1({1, 2, 3, 4}))
+    ].
 
 dicts_are_same(D1, D2) ->
     S = dict:size(D1),
