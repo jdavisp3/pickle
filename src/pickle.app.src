@@ -15,7 +15,7 @@
 {application, pickle, [
 	{id, "pickle"},
 	{description, "Convert Python pickles to and from Erlang terms."},
-	{vsn, "0.1.2"},
+	{vsn, "0.2.0"},
 	{modules, []},
 	{applications, [
 		kernel,
