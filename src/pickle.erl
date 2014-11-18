@@ -30,6 +30,8 @@
 -include("pickle.hrl").
 
 -define(MAXINT, 2147483647). % threshold to switch to Python long ints
+-define(MININT, -2147483648).
+-define(IS_LONG(Number), ((Number > ?MAXINT) or (Number < ?MININT))).
 
 % state of stack machine which implements pickle protocol
 -record(mach, {
@@ -149,14 +151,26 @@ run_machine(Mach, Rest) ->
 -spec step_machine(Mach::#mach{}, PickleRest::binary()) ->
                    {NewMach::#mach{}, NewPickleRest::binary()}.
 
+%% FLOAT - text representation
+step_machine(#mach{stack=Stack} = Mach, <<$F, Rest/binary>>) ->
+    [BinFloat, Rest2] = binary:split(Rest, <<$\n>>),
+    Float = list_to_float(binary_to_list(BinFloat)),
+    {Mach#mach{stack=[Float | Stack]}, Rest2};
+
 % 32-bit signed numbers
 step_machine(Mach, <<$J, Num:32/little-signed, Rest/binary>>) ->
     NewStack = [Num | Mach#mach.stack],
     {Mach#mach{stack=NewStack}, Rest};
 
+%% TRUE | FALSE - text protocol
+step_machine(#mach{stack=Stack} = Mach, <<$I, "01\n", Rest/binary>>) ->
+    {Mach#mach{stack=[true | Stack]}, Rest};
+step_machine(#mach{stack=Stack} = Mach, <<$I, "00\n", Rest/binary>>) ->
+    {Mach#mach{stack=[false | Stack]}, Rest};
+
 %% INT
 step_machine(Mach, <<$I, Rest/binary>>) ->
-  [BinInt, Rest2] = binary:split(Rest, <<$\n>>, []),
+  [BinInt, Rest2] = binary:split(Rest, <<$\n>>),
   NewStack = [list_to_integer(binary_to_list(BinInt)) | Mach#mach.stack],
   {Mach#mach{stack=NewStack}, Rest2};
 
@@ -164,6 +178,12 @@ step_machine(Mach, <<$I, Rest/binary>>) ->
 step_machine(Mach, <<$K, Num, Rest/binary>>) ->
     NewStack = [Num | Mach#mach.stack],
     {Mach#mach{stack=NewStack}, Rest};
+
+%% LONG
+step_machine(Mach, <<$L, Rest/binary>>) ->
+    [BinInt, Rest2] = binary:split(Rest, <<"L\n">>),
+    NewStack = [list_to_integer(binary_to_list(BinInt)) | Mach#mach.stack],
+    {Mach#mach{stack=NewStack}, Rest2};
 
 % 16-bit numbers
 step_machine(Mach, <<$M, Num:16/little-unsigned, Rest/binary>>) ->
@@ -191,6 +211,17 @@ step_machine(Mach, <<$N, Rest/binary>>) ->
     NewStack = [none | Mach#mach.stack],
     {Mach#mach{stack=NewStack}, Rest};
 
+%% STRING
+step_machine(#mach{stack=Stack} = Mach, <<$S, Rest/binary>>) ->
+    [ReprString, Rest2] = binary:split(Rest, <<$\n>>),
+    UnquotedReprString = case ReprString of
+                             <<Q, _/binary>> when (Q == $') orelse (Q == $") ->
+                                 binary:part(ReprString, 1, byte_size(ReprString) - 2);
+                             _ -> ReprString
+                         end,
+    String = unrepr_string(UnquotedReprString),
+    {Mach#mach{stack=[String | Stack]}, Rest2};
+
 % string, 4-byte length
 step_machine(Mach, <<$T, Len:32/little-signed, Bin:Len/binary, Rest/binary>>) ->
     NewStack = [Bin | Mach#mach.stack],
@@ -210,6 +241,12 @@ step_machine(Mach, <<16#88, Rest/binary>>) ->
 step_machine(Mach, <<16#89, Rest/binary>>) ->
     NewStack = [false | Mach#mach.stack],
     {Mach#mach{stack=NewStack}, Rest};
+
+%% LIST - build list from items on stack; like $e, but creates a new list
+step_machine(#mach{stack=Stack} = Mach, <<$l, Rest/binary>>) ->
+    {Slice, Stack1} = pop_to_mark(Stack),    % 'Slice' is empty in modern pickle
+    NewList = add_slice([], Slice),
+    {Mach#mach{stack=[{list, NewList} | Stack1]}, Rest};
 
 % empty list
 step_machine(Mach, <<$], Rest/binary>>) ->
@@ -263,6 +300,13 @@ step_machine(Mach, <<$t, Rest/binary>>) ->
     {Slice, Stack} = pop_to_mark(Mach#mach.stack),
     Tuple = erlang:list_to_tuple([finalize(V) || V <- Slice]),
     NewStack = [Tuple | Stack],
+    {Mach#mach{stack=NewStack}, Rest};
+
+%% DICT - build dict from items on stack; like $u, but creates a new dict
+step_machine(#mach{stack=Stack} = Mach, <<$d, Rest/binary>>) ->
+    {Slice, Stack1} = pop_to_mark(Stack),    % 'Slice' is empty in modern pickle
+    KeyVals = [finalize(T) || T <- Slice],
+    NewStack = set_items([{dictionary, dict:new()} | Stack1], KeyVals),
     {Mach#mach{stack=NewStack}, Rest};
 
 % empty dictionary
@@ -420,10 +464,13 @@ encode_term(Number, Pickle, #encoder{bin=false}) when is_float(Number) ->
 
 %% integer / long in text protocol
 encode_term(Number, Pickle, #encoder{bin=false})
-  when is_number(Number), ((Number =< ?MAXINT) and (Number >= (-1 * ?MAXINT - 1))) ->
+  when is_integer(Number), not(?IS_LONG(Number)) ->
+    %% signed int
     %% [-2147483648, 2147483647]
     [<<$I, (list_to_binary(integer_to_list(Number)))/binary, $\n>> | Pickle];
-encode_term(Number, Pickle, #encoder{bin=false}) when is_number(Number) ->
+encode_term(Number, Pickle, #encoder{proto=P})
+  when is_integer(Number), ?IS_LONG(Number), (P < 2) ->
+    %% signed long
     [<<$L, (list_to_binary(integer_to_list(Number)))/binary, $L, $\n>> | Pickle];
 
 % floats
@@ -442,7 +489,7 @@ encode_term(Number, Pickle, _)
 
 % big integers
 encode_term(Number, Pickle, _)
-  when is_number(Number), Number =< ?MAXINT ->
+  when is_number(Number), not(?IS_LONG(Number)) ->
     [<<$J, Number:32/little-signed>> | Pickle];
 
 % empty tuples
@@ -467,9 +514,9 @@ encode_term(Dict, Pickle, Encoder)
 
 % long integers
 encode_term(Number, Pickle, _) when is_number(Number) ->
-    {Encoding, NumBytes} = encode_long(Number, [], 0),
-    Header = long_header(NumBytes),
-    [lists:reverse(Encoding), Header | Pickle];
+    Encoding = encode_long(Number, <<>>),
+    Header = long_header(byte_size(Encoding)),
+    [Encoding, Header | Pickle];
 
 % binaries (Python strings)
 encode_term(Binary, Pickle, #encoder{bin=false}) when is_binary(Binary) ->
@@ -533,13 +580,12 @@ long_header(NumBytes) ->
     <<16#8b, NumBytes:32/little-signed>>.
 
 %% @private
-%% @doc Return the encoding for a Python Long in a reversed list,
-%% except for the initial control character.
--spec encode_long(Number::number(), Bytes::list(byte()), NumBytes::non_neg_integer()) -> tuple().
-encode_long(Number, Bytes, NumBytes) when Number >= -128, Number =< 127 ->
-    {[Number | Bytes], NumBytes + 1};
-encode_long(Number, Bytes, NumBytes) ->
-    encode_long(Number bsr 8, [Number band 255 | Bytes], NumBytes + 1).
+%% @doc Return the encoding for a Python Long
+-spec encode_long(Number::number(), Bytes::list(byte())) -> tuple().
+encode_long(Number, Bytes) when Number >= -128, Number =< 127 ->
+    <<Bytes/binary, Number>>;
+encode_long(Number, Bytes) ->
+    encode_long(Number bsr 8, <<Bytes/binary, (Number band 255)>>).
 
 %% @private
 %% @doc Add the encoding for a tuple to the given iolist,
@@ -607,6 +653,30 @@ repr_char(C) ->
             end,
     <<$\\, $x, (HChar(C div 16)), (HChar(C rem 16))>>.
 
+%% @private
+%% @doc like python's str.decode("string-escape")
+-spec unrepr_string(ReprString::binary()) -> ByteString::binary().
+unrepr_string(<<"\\t", Rest/binary>>) ->
+    <<$\t, (unrepr_string(Rest))/binary>>;
+unrepr_string(<<"\\n", Rest/binary>>) ->
+    <<$\n, (unrepr_string(Rest))/binary>>;
+unrepr_string(<<"\\r", Rest/binary>>) ->
+    <<$\r, (unrepr_string(Rest))/binary>>;
+unrepr_string(<<"\\\\", Rest/binary>>) ->
+    <<$\\, (unrepr_string(Rest))/binary>>;
+unrepr_string(<<"\\'", Rest/binary>>) ->
+    <<$', (unrepr_string(Rest))/binary>>;
+unrepr_string(<<"\\\"", Rest/binary>>) ->
+    <<$", (unrepr_string(Rest))/binary>>;
+unrepr_string(<<$\\, $x, Hex1, Hex2, Rest/binary>>) ->
+    UnHChar = fun(C) when C < $W -> C - $0;
+                 (C) when C > $W -> C - $W
+              end,
+    <<(UnHChar(Hex1)):4, (UnHChar(Hex2)):4, (unrepr_string(Rest))/binary>>;
+unrepr_string(<<C, Rest/binary>>) ->
+    <<C, (unrepr_string(Rest))/binary>>;
+unrepr_string(<<>>) -> <<>>.
+
 % Tests
 
 -ifdef(TEST).
@@ -622,9 +692,7 @@ big_string() ->
 pickle_to_term_test_() ->
     [
      ?_assertError(incomplete_pickle, pickle_to_term(<<16#80, 2>>)),
-     %% pickle.dumps(255, protocol=0) - v0 actually don't prepend version
      ?_assertEqual(pickle_to_term(<<16#80, 2, $I, "255", $\n, $.>>), 255),
-     %% pickle.dumps(-1, protocol=2)
      ?_assertEqual(pickle_to_term(<<16#80, 2, $J, 0, 0, 0, 0, $.>>), 0),
      ?_assertEqual(pickle_to_term(<<16#80, 2, $J, 255, 0, 0, 0, $.>>), 255),
      ?_assertEqual(pickle_to_term(<<16#80, 2, $J, 0, 0, 0, 128, $.>>),
@@ -748,7 +816,18 @@ pickle_to_term_test_() ->
              {[], []}),
 
      %% pickle < 2 - no protocol version prefix
-     ?_assertEqual(pickle_to_term(<<$G, 63, 241, 153, 153, 153, 153, 153, 154, $.>>), 1.1)
+     ?_assertEqual(<<"qwe'\"rty">>,
+                   pickle_to_term(<<"S\"qwe\\'\\\"rty\"\n.">>)),
+
+     %% test for 'l' opcode (looks like such pickle never generated in practice)
+     ?_assertEqual([1, 2, 3], pickle_to_term(<<"(I1\nI2\nI3\nl.">>)),
+
+     %% test for 'd' opcode (looks like such pickle never generated in practice)
+     ?_assert(dicts_are_same(pickle_to_term(<<"(I1\nI2\nd.">>),
+                             dict:from_list([{1, 2}]))),
+
+     %% most likely never generated in practice
+     ?_assertEqual(<<"qwerty">>, pickle_to_term(<<"Sqwerty\n.">>))
      ].
 
 term_to_pickle_test_() ->
@@ -759,10 +838,23 @@ term_to_pickle_test_() ->
      ?_assertEqual(term_to_pickle(65535), <<16#80, 2, "M", 255, 255, $.>>),
      ?_assertEqual(term_to_pickle(-1), <<16#80, 2, "J", 255, 255, 255, 255, $.>>),
      ?_assertEqual(term_to_pickle(65536), <<16#80, 2, "J", 0, 0, 1, 0, $.>>),
-     ?_assertEqual(term_to_pickle(2147483648),
-                   <<16#80, 2, 138, 5, 0, 0, 0, 128, 0, $.>>),
+     %% in Python the same int may be encoded as LONG or INT depending on CPU
+     %% architecture (i686 x86_64).
+     %% So, representation is platform-dependent.
+     %% We use i686 (32bit) one.
+     ?_assertEqual(term_to_pickle(-1 bsl 2048),
+                   <<16#80, 2, 139, 1, 1, 0:258/unit:8, 255, $.>>),
+     ?_assertEqual(<<16#80, 2, 138, 5, 255, 255, 255, 127, 255, $.>>,
+                   term_to_pickle(-2147483649)),
+     ?_assertEqual(<<16#80, 2, $J, 0, 0, 0, 128, $.>>,
+                   term_to_pickle(-2147483648)),
+     ?_assertEqual(<<16#80, 2, $J, 255, 255, 255, 127, $.>>,
+                  term_to_pickle(2147483647)),
+     ?_assertEqual(<<16#80, 2, 138, 5, 0, 0, 0, 128, 0, $.>>,
+                  term_to_pickle(2147483648)),
      ?_assertEqual(term_to_pickle(1 bsl 2048),
                    <<16#80, 2, 139, 1, 1, 0:258/unit:8, 1, $.>>),
+
      ?_assertEqual(term_to_pickle(none), <<16#80, 2, "N", $.>>),
      ?_assertEqual(term_to_pickle(true), <<16#80, 2, 16#88, $.>>),
      ?_assertEqual(term_to_pickle(false), <<16#80, 2, 16#89, $.>>),
@@ -832,14 +924,58 @@ term_to_pickle_v0_test_() ->
                    TTP0(dict:from_list([{1, 1}, {2, 2}, {3, 3}])))
     ].
 
-
 term_to_pickle_v1_test_() ->
     TTP1 = fun(Term) -> term_to_pickle(Term, 1) end,
     [
+     ?_assertEqual(<<"L-2147483649L\n.">>, TTP1(-2147483649)),
      ?_assertEqual(<<").">>, TTP1({})),
      ?_assertEqual(<<"(K\x01t.">>, TTP1({1})),
      ?_assertEqual(<<"(K\x01K\x02K\x03K\x04t.">>, TTP1({1, 2, 3, 4}))
     ].
+
+codec_test_() ->
+    Terms =
+        [0,
+         255,
+         256,
+         65535,
+         -1,
+         65536,
+         -2147483649,
+         ?MININT,
+         ?MAXINT,
+         2147483648,
+         none,
+         true,
+         false,
+         <<>>,
+         <<"test">>,
+         << <<C>> || C <- lists:seq(0, 255) >>,
+         {},
+         {1},
+         {1, 2},
+         {1, 2, 3},
+         {1, 2, 3, 4},
+         [],
+         [1, 2, 3],
+         0.0,
+         1.0,
+         -1.0,
+         [0.5, [0], {none, <<>>, true}, false]
+        ],
+    [{iolist_to_binary(io_lib:format("Protocol #~p, ~p", [Protocol, Term])),
+      ?_assertEqual(Term, pickle_to_term(term_to_pickle(Term, Protocol)))}
+     || Term <- Terms, Protocol <- [0, 1, 2]].
+
+codec_dict_test_() ->
+    Dicts = [
+             dict:new(),
+             dict:from_list([{1, 1}, {2, 2}])
+            ],
+    [{iolist_to_binary(io_lib:format("Protocol #~p, dict:from_list(~p)",
+                                     [Protocol, dict:to_list(Term)])),
+      ?_assert(dicts_are_same(Term, pickle_to_term(term_to_pickle(Term, Protocol))))}
+     || Term <- Dicts, Protocol <- [0, 1, 2]].
 
 dicts_are_same(D1, D2) ->
     S = dict:size(D1),
