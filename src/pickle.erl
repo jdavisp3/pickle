@@ -499,18 +499,9 @@ encode_term({}, Pickle, _) ->
     [$) | Pickle];
 
 % dictionaries
-encode_term(Dict, Pickle, #encoder{bin=true} = Encoder)
-  when is_tuple(Dict), element(1, Dict) =:= dict ->
-    NewPickle = [$} | Pickle],
-    case dict:size(Dict) of
-        0 ->
-            NewPickle;
-        _ ->
-            [$u | encode_dict(Dict, [$( | NewPickle], Encoder)]
-    end;
 encode_term(Dict, Pickle, Encoder)
   when is_tuple(Dict), element(1, Dict) =:= dict ->
-    encode_dict(Dict, [<<$(, $d>> | Pickle], Encoder);
+    encode_dict(Dict, Pickle, Encoder, dict);
 
 % long integers
 encode_term(Number, Pickle, _) when is_number(Number) ->
@@ -553,7 +544,13 @@ encode_term([], Pickle, _) ->
 encode_term(List, Pickle, #encoder{bin=true} = Encoder) when is_list(List) ->
     encode_list_bin(List, [$(, $] | Pickle], Encoder);
 encode_term(List, Pickle, #encoder{bin=false} = Encoder) when is_list(List) ->
-    encode_list_txt(List, [<<$(, $l>> | Pickle], Encoder).
+    encode_list_txt(List, [<<$(, $l>> | Pickle], Encoder);
+
+%% map as dict
+encode_term(Map, Pickle, Encoder) ->
+    true = erlang:is_builtin(erlang, is_map, 1) andalso erlang:is_map(Map),
+    encode_dict(Map, Pickle, Encoder, maps).
+
 
 %% @private
 %% @doc finish the encoding
@@ -618,9 +615,20 @@ encode_list_txt([Term | List], Pickle, Encoder) ->
 
 %% @private
 %% @doc Add the encoding for a dictionary to the given iolist.
--spec encode_dict(Dict::dict(), Pickle::iolist(), Encoder::#encoder{}) -> iolist().
-encode_dict(Dict, Pickle, Encoder) ->
-    {ResPickle, _} = dict:fold(fun encode_dict_kv/3, {Pickle, Encoder}, Dict),
+-spec encode_dict(Dict::dict(), Pickle::iolist(), Encoder::#encoder{}, Mod::dict | maps) -> iolist().
+encode_dict(Dict, Pickle, #encoder{bin=true} = Encoder, Mod) ->
+    NewPickle = [$} | Pickle],
+    case Mod:size(Dict) of
+        0 ->
+            NewPickle;
+        _ ->
+            [$u | encode_dict1(Dict, [$( | NewPickle], Encoder, Mod)]
+    end;
+encode_dict(Dict, Pickle, Encoder, Mod) ->
+    encode_dict1(Dict, [<<$(, $d>> | Pickle], Encoder, Mod).
+
+encode_dict1(Dict, Pickle, Encoder, Mod) ->
+    {ResPickle, _} = Mod:fold(fun encode_dict_kv/3, {Pickle, Encoder}, Dict),
     ResPickle.
 
 %% @private
@@ -830,7 +838,23 @@ pickle_to_term_test_() ->
      ?_assertEqual(<<"qwerty">>, pickle_to_term(<<"Sqwerty\n.">>))
      ].
 
+-define(IF_MAPS(Then, Else),
+        case erlang:is_builtin(erlang, is_map, 1) of
+            true -> Then;
+            false -> Else
+        end).
+
 term_to_pickle_test_() ->
+    MapTests = ?IF_MAPS(
+                  [
+                   ?_assertEqual(
+                      <<16#80, 2, $}, $.>>,
+                      term_to_pickle(maps:new())),
+                   ?_assertEqual(
+                      <<16#80, 2, $}, $(, $K, 1, $K, 2, $u, $.>>,
+                      term_to_pickle(maps:from_list([{1,2}])))
+                  ], []),
+
     [
      ?_assertEqual(term_to_pickle(0), <<16#80, 2, "K", 0, $.>>),
      ?_assertEqual(term_to_pickle(255), <<16#80, 2, "K", 255, $.>>),
@@ -878,10 +902,20 @@ term_to_pickle_test_() ->
      ?_assertEqual(term_to_pickle(1.5), <<128, 2, 71, 63, 248, 0, 0, 0, 0, 0, 0, 46>>),
      ?_assertEqual(term_to_pickle(1.0e20), <<128, 2, 71, 68, 21, 175, 29, 120, 181, 140, 64, 46>>),
      ?_assertEqual(term_to_pickle(-1.0e20), <<128, 2, 71, 196, 21, 175, 29, 120, 181, 140, 64, 46>>)
+     | MapTests
 ].
 
 term_to_pickle_v0_test_() ->
     TTP0 = fun(Term) -> term_to_pickle(Term, 0) end,
+    MapTests = ?IF_MAPS(
+                  [
+                   ?_assertEqual(
+                      <<"(d.">>,
+                      TTP0(maps:new())),
+                   ?_assertEqual(
+                      <<"(dI1\nI2\nsI3\nI4\nsI5\nI6\ns.">>,
+                      TTP0(maps:from_list([{1,2}, {3, 4}, {5, 6}])))
+                  ], []),
     [
      %% booleans
      ?_assertEqual(<<"I01\n.">>, TTP0(true)),
@@ -922,7 +956,7 @@ term_to_pickle_v0_test_() ->
      %% dict; XXX: dict traversal order isn't defined, so this may fall at some point
      ?_assertEqual(<<"(dI1\nI1\nsI2\nI2\nsI3\nI3\ns.">>,
                    TTP0(dict:from_list([{1, 1}, {2, 2}, {3, 3}])))
-    ].
+     | MapTests].
 
 term_to_pickle_v1_test_() ->
     TTP1 = fun(Term) -> term_to_pickle(Term, 1) end,
@@ -961,8 +995,7 @@ codec_test_() ->
          0.0,
          1.0,
          -1.0,
-         [0.5, [0], {none, <<>>, true}, false]
-        ],
+         [0.5, [0], {none, <<>>, true}, false]],
     [{iolist_to_binary(io_lib:format("Protocol #~p, ~p", [Protocol, Term])),
       ?_assertEqual(Term, pickle_to_term(term_to_pickle(Term, Protocol)))}
      || Term <- Terms, Protocol <- [0, 1, 2]].
