@@ -21,7 +21,8 @@
 -module(pickle).
 
 %% API
--export([pickle_to_term/1, term_to_pickle/1, term_to_pickle/2]).
+-export([pickle_to_term/1, pickle_to_term/2,
+         term_to_pickle/1, term_to_pickle/2]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -33,11 +34,15 @@
 -define(MININT, -2147483648).
 -define(IS_LONG(Number), ((Number > ?MAXINT) or (Number < ?MININT))).
 
+-type dict_module() :: dict | orddict | maps.
+-type decode_opts() :: [{dict_module, dict_module()}].
+
 % state of stack machine which implements pickle protocol
 -record(mach, {
           stack=[] :: list(),
           memo :: dict(),
-          done=false :: boolean()
+          done=false :: boolean(),
+          dict_module=dict :: dict_module()
          }).
 
 %% pickler options
@@ -66,7 +71,7 @@
 %%    tuple                 tuple
 %%    integer               number
 %%    long                  number
-%%    dictionary            dict
+%%    dictionary            dict | orddict | map (configurable)
 %%    float                 float
 %%    unicode               #pickle_unicode{} (record)
 %%    object                #pickle_object{} (record)
@@ -77,7 +82,14 @@
 %%
 -spec pickle_to_term(Pickle::binary()) -> term().
 pickle_to_term(Pickle) when is_binary(Pickle) ->
-    {Val, <<>>} = start_machine(Pickle),
+    pickle_to_term(Pickle, []).
+
+-spec pickle_to_term(Pickle, Opts) -> term()
+                                          when
+      Pickle :: binary(),
+      Opts :: decode_opts().
+pickle_to_term(Pickle, Opts) when is_binary(Pickle) ->
+    {Val, <<>>} = start_machine(Pickle, Opts),
     Val.
 
 %% @doc Turn an Erlang term into a Python pickle.
@@ -96,6 +108,7 @@ pickle_to_term(Pickle) when is_binary(Pickle) ->
 %%    number =< MAXINT      integer
 %%    number > MAXINT       long
 %%    dict                  dictionary
+%%    map                   dictionary
 %%    float                 float
 %%    bitstring             *not supported*
 %%    arbitrary atom        *not supported*
@@ -115,20 +128,21 @@ term_to_pickle(Term, Protocol) when (Protocol >= 0) and (Protocol =< 2) ->
 
 %% @private
 %% @doc Create a new stack machine record
--spec new_mach() -> #mach{}.
-new_mach() ->
-    #mach{memo=dict:new()}.
+-spec new_mach(Opts::decode_opts()) -> #mach{}.
+new_mach(Opts) ->
+    #mach{memo=dict:new(),
+          dict_module=proplists:get_value(dict_module, Opts, dict)}.
 
 
 %% @private
 %% @doc Start running a new stack machine and return
 %% the result of running it.
--spec start_machine(Pickle::binary()) -> {term(), binary()}.
-start_machine(<<16#80, P, Rest/binary>> = _Pickle) when P >= 2 ->
-    run_machine(new_mach(), Rest);
-start_machine(Pickle) ->
+-spec start_machine(Pickle::binary(), Opts::decode_opts()) -> {term(), binary()}.
+start_machine(<<16#80, P, Rest/binary>> = _Pickle, Opts) when P >= 2 ->
+    run_machine(new_mach(Opts), Rest);
+start_machine(Pickle, Opts) ->
     %% protocol < 2
-    run_machine(new_mach(), Pickle).
+    run_machine(new_mach(Opts), Pickle).
 
 
 %% @private
@@ -303,29 +317,29 @@ step_machine(Mach, <<$t, Rest/binary>>) ->
     {Mach#mach{stack=NewStack}, Rest};
 
 %% DICT - build dict from items on stack; like $u, but creates a new dict
-step_machine(#mach{stack=Stack} = Mach, <<$d, Rest/binary>>) ->
+step_machine(#mach{stack=Stack, dict_module=Mod} = Mach, <<$d, Rest/binary>>) ->
     {Slice, Stack1} = pop_to_mark(Stack),    % 'Slice' is empty in modern pickle
     KeyVals = [finalize(T) || T <- Slice],
-    NewStack = set_items([{dictionary, dict:new()} | Stack1], KeyVals),
+    NewStack = set_items([{dictionary, Mod:new()} | Stack1], KeyVals, Mod),
     {Mach#mach{stack=NewStack}, Rest};
 
 % empty dictionary
-step_machine(Mach, <<$}, Rest/binary>>) ->
-    NewStack = [{dictionary, dict:new()} | Mach#mach.stack],
+step_machine(#mach{dict_module=Mod} = Mach, <<$}, Rest/binary>>) ->
+    NewStack = [{dictionary, Mod:new()} | Mach#mach.stack],
     {Mach#mach{stack=NewStack}, Rest};
 
 % set item on dictionary
-step_machine(Mach, <<$s, Rest/binary>>) ->
+step_machine(#mach{dict_module=Mod} = Mach, <<$s, Rest/binary>>) ->
     [V, K, {dictionary, D} | Stack] = Mach#mach.stack,
-    NewDict = dict:store(finalize(K), finalize(V), D),
+    NewDict = dict_store(Mod, finalize(K), finalize(V), D),
     NewStack = [{dictionary, NewDict} | Stack],
     {Mach#mach{stack=NewStack}, Rest};
 
 % set items on dictionary
-step_machine(Mach, <<$u, Rest/binary>>) ->
+step_machine(#mach{dict_module=Mod} = Mach, <<$u, Rest/binary>>) ->
     {Slice, Stack} = pop_to_mark(Mach#mach.stack),
     KeyVals = [finalize(T) || T <- Slice],
-    NewStack = set_items(Stack, KeyVals),
+    NewStack = set_items(Stack, KeyVals, Mod),
     {Mach#mach{stack=NewStack}, Rest};
 
 % BINPUT set to memo
@@ -407,20 +421,27 @@ add_slice(List, []) ->
 add_slice(List, [Val | Slice]) ->
     add_slice([finalize(Val) | List], Slice).
 
+
+%% inconsistent API between 'maps' and 'dict' | 'orddict'
+dict_store(maps, Key, Val, Dict) ->
+    maps:put(Key, Val, Dict);
+dict_store(Mod, Key, Val, Dict) ->
+    Mod:store(Key, Val, Dict).
+
 %% @private
 %% @doc Add the key-val pairs to the dict at the top of the stack.
--spec set_items(Stack::list(), KeyVals::list()) -> NewStack::list().
-set_items([{dictionary, Dict} | Stack], KeyVals) ->
-    NewDict = update_dict(Dict, KeyVals),
+-spec set_items(Stack::list(), KeyVals::list(), Mod::dict_module()) -> NewStack::list().
+set_items([{dictionary, Dict} | Stack], KeyVals, Mod) ->
+    NewDict = update_dict(Dict, KeyVals, Mod),
     [{dictionary, NewDict} | Stack].
 
 %% @private
 %% @doc Add the key-val pairs to the given dict. Return the new dict.
--spec update_dict(Dict::dict(), KeyVals::list()) -> NewStack::list().
-update_dict(Dict, []) ->
+-spec update_dict(Dict::dict(), KeyVals::list(), Mod::dict_module()) -> NewStack::list().
+update_dict(Dict, [], _Mod) ->
     Dict;
-update_dict(Dict, [Key, Val | KeyVals]) ->
-    update_dict(dict:store(Key, Val, Dict), KeyVals).
+update_dict(Dict, [Key, Val | KeyVals], Mod) ->
+    update_dict(dict_store(Mod, Key, Val, Dict), KeyVals, Mod).
 
 
 %% @private
@@ -499,18 +520,9 @@ encode_term({}, Pickle, _) ->
     [$) | Pickle];
 
 % dictionaries
-encode_term(Dict, Pickle, #encoder{bin=true} = Encoder)
-  when is_tuple(Dict), element(1, Dict) =:= dict ->
-    NewPickle = [$} | Pickle],
-    case dict:size(Dict) of
-        0 ->
-            NewPickle;
-        _ ->
-            [$u | encode_dict(Dict, [$( | NewPickle], Encoder)]
-    end;
 encode_term(Dict, Pickle, Encoder)
   when is_tuple(Dict), element(1, Dict) =:= dict ->
-    encode_dict(Dict, [<<$(, $d>> | Pickle], Encoder);
+    encode_dict(Dict, Pickle, Encoder, dict);
 
 % long integers
 encode_term(Number, Pickle, _) when is_number(Number) ->
@@ -553,7 +565,13 @@ encode_term([], Pickle, _) ->
 encode_term(List, Pickle, #encoder{bin=true} = Encoder) when is_list(List) ->
     encode_list_bin(List, [$(, $] | Pickle], Encoder);
 encode_term(List, Pickle, #encoder{bin=false} = Encoder) when is_list(List) ->
-    encode_list_txt(List, [<<$(, $l>> | Pickle], Encoder).
+    encode_list_txt(List, [<<$(, $l>> | Pickle], Encoder);
+
+%% map as dict
+encode_term(Map, Pickle, Encoder) ->
+    true = erlang:is_builtin(erlang, is_map, 1) andalso erlang:is_map(Map),
+    encode_dict(Map, Pickle, Encoder, maps).
+
 
 %% @private
 %% @doc finish the encoding
@@ -618,9 +636,20 @@ encode_list_txt([Term | List], Pickle, Encoder) ->
 
 %% @private
 %% @doc Add the encoding for a dictionary to the given iolist.
--spec encode_dict(Dict::dict(), Pickle::iolist(), Encoder::#encoder{}) -> iolist().
-encode_dict(Dict, Pickle, Encoder) ->
-    {ResPickle, _} = dict:fold(fun encode_dict_kv/3, {Pickle, Encoder}, Dict),
+-spec encode_dict(Dict::dict(), Pickle::iolist(), Encoder::#encoder{}, Mod::dict | maps) -> iolist().
+encode_dict(Dict, Pickle, #encoder{bin=true} = Encoder, Mod) ->
+    NewPickle = [$} | Pickle],
+    case Mod:size(Dict) of
+        0 ->
+            NewPickle;
+        _ ->
+            [$u | encode_dict1(Dict, [$( | NewPickle], Encoder, Mod)]
+    end;
+encode_dict(Dict, Pickle, Encoder, Mod) ->
+    encode_dict1(Dict, [<<$(, $d>> | Pickle], Encoder, Mod).
+
+encode_dict1(Dict, Pickle, Encoder, Mod) ->
+    {ResPickle, _} = Mod:fold(fun encode_dict_kv/3, {Pickle, Encoder}, Dict),
     ResPickle.
 
 %% @private
@@ -689,7 +718,22 @@ big_string_pickle() ->
 big_string() ->
     binary:copy(<<$a>>, 256).
 
+-define(IF_MAPS(Then, Else),
+        case erlang:is_builtin(erlang, is_map, 1) of
+            true -> Then;
+            false -> Else
+        end).
+
 pickle_to_term_test_() ->
+    MapTests = ?IF_MAPS(
+                  [?_assertEqual(
+                      maps:new(),
+                      pickle_to_term(<<128, 2, 125, 113, 0, 46>>, [{dict_module, maps}])),
+                   ?_assertEqual(
+                      maps:from_list([{1, 2}]),
+                      pickle_to_term(<<128, 2, 125, 113, 0, 75, 1, 75, 2, 115, 46>>,
+                                     [{dict_module, maps}]))
+                  ], []),
     [
      ?_assertError(incomplete_pickle, pickle_to_term(<<16#80, 2>>)),
      ?_assertEqual(pickle_to_term(<<16#80, 2, $I, "255", $\n, $.>>), 255),
@@ -763,6 +807,9 @@ pickle_to_term_test_() ->
                                               75, 5, 78, 75, 6, 78, 75, 7, 78, 75, 8,
                                               78, 75, 9, 78, 117, 46>>),
                              dict_from_keys(lists:seq(0, 9)))),
+     ?_assertEqual([{1, 2}],
+                   pickle_to_term(<<128, 2, 125, 113, 0, 75, 1, 75, 2, 115, 46>>,
+                                  [{dict_module, orddict}])),
      ?_assertEqual(pickle_to_term(<<16#80, 2, 139, 1, 1, 0:258/unit:8, 1, $.>>), 1 bsl 2048),
      ?_assertEqual(pickle_to_term(<<128, 2, 71, 0, 0, 0, 0, 0, 0, 0, 0, 46>>), 0.0),
      ?_assertEqual(pickle_to_term(<<128, 2, 71, 63, 240, 0, 0, 0, 0, 0, 0, 46>>), 1.0),
@@ -828,9 +875,19 @@ pickle_to_term_test_() ->
 
      %% most likely never generated in practice
      ?_assertEqual(<<"qwerty">>, pickle_to_term(<<"Sqwerty\n.">>))
-     ].
+     | MapTests].
 
 term_to_pickle_test_() ->
+    MapTests = ?IF_MAPS(
+                  [
+                   ?_assertEqual(
+                      <<16#80, 2, $}, $.>>,
+                      term_to_pickle(maps:new())),
+                   ?_assertEqual(
+                      <<16#80, 2, $}, $(, $K, 1, $K, 2, $u, $.>>,
+                      term_to_pickle(maps:from_list([{1,2}])))
+                  ], []),
+
     [
      ?_assertEqual(term_to_pickle(0), <<16#80, 2, "K", 0, $.>>),
      ?_assertEqual(term_to_pickle(255), <<16#80, 2, "K", 255, $.>>),
@@ -878,10 +935,20 @@ term_to_pickle_test_() ->
      ?_assertEqual(term_to_pickle(1.5), <<128, 2, 71, 63, 248, 0, 0, 0, 0, 0, 0, 46>>),
      ?_assertEqual(term_to_pickle(1.0e20), <<128, 2, 71, 68, 21, 175, 29, 120, 181, 140, 64, 46>>),
      ?_assertEqual(term_to_pickle(-1.0e20), <<128, 2, 71, 196, 21, 175, 29, 120, 181, 140, 64, 46>>)
+     | MapTests
 ].
 
 term_to_pickle_v0_test_() ->
     TTP0 = fun(Term) -> term_to_pickle(Term, 0) end,
+    MapTests = ?IF_MAPS(
+                  [
+                   ?_assertEqual(
+                      <<"(d.">>,
+                      TTP0(maps:new())),
+                   ?_assertEqual(
+                      <<"(dI1\nI2\nsI3\nI4\nsI5\nI6\ns.">>,
+                      TTP0(maps:from_list([{1,2}, {3, 4}, {5, 6}])))
+                  ], []),
     [
      %% booleans
      ?_assertEqual(<<"I01\n.">>, TTP0(true)),
@@ -922,7 +989,7 @@ term_to_pickle_v0_test_() ->
      %% dict; XXX: dict traversal order isn't defined, so this may fall at some point
      ?_assertEqual(<<"(dI1\nI1\nsI2\nI2\nsI3\nI3\ns.">>,
                    TTP0(dict:from_list([{1, 1}, {2, 2}, {3, 3}])))
-    ].
+     | MapTests].
 
 term_to_pickle_v1_test_() ->
     TTP1 = fun(Term) -> term_to_pickle(Term, 1) end,
@@ -934,6 +1001,11 @@ term_to_pickle_v1_test_() ->
     ].
 
 codec_test_() ->
+    MapTests = ?IF_MAPS(
+                  [
+                   maps:new(),
+                   maps:from_list([{1,2}, {3, 4}, {5, 6}])
+                  ], []),
     Terms =
         [0,
          255,
@@ -962,9 +1034,13 @@ codec_test_() ->
          1.0,
          -1.0,
          [0.5, [0], {none, <<>>, true}, false]
-        ],
+         | MapTests],
     [{iolist_to_binary(io_lib:format("Protocol #~p, ~p", [Protocol, Term])),
-      ?_assertEqual(Term, pickle_to_term(term_to_pickle(Term, Protocol)))}
+      ?_assertEqual(Term,
+                    pickle_to_term(
+                      term_to_pickle(Term, Protocol),
+                      [{dict_module, maps}])
+                   )}
      || Term <- Terms, Protocol <- [0, 1, 2]].
 
 codec_dict_test_() ->
